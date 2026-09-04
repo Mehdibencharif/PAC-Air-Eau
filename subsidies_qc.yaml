@@ -1,0 +1,108 @@
+# ============================================================================
+# Règles des subventions applicables à une thermopompe air-eau pour ECS
+# (eau chaude sanitaire) au Québec.
+#
+# IMPORTANT — LIRE AVANT UTILISATION EN PRODUCTION
+# Les montants exacts des programmes publics changent souvent (revus 1-2x/an,
+# parfois en cours d'année). Ce fichier distingue :
+#   - confidence: "officiel"    -> vérifié sur une page gouvernementale/Hydro-Québec
+#   - confidence: "estimation"  -> déduit de sources secondaires (blogues, entrepreneurs),
+#                                   À CONFIRMER avant de l'afficher comme un montant garanti
+#
+# Mets à jour "last_verified" à chaque vérification. L'app affiche toujours
+# la source_url et un avertissement si confidence == "estimation".
+# ============================================================================
+
+programs:
+
+  - id: logisvert_chauffe_eau_thermopompe
+    name: "LogisVert — Chauffe-eau thermopompe / thermopompe air-eau (Hydro-Québec)"
+    administrator: "Hydro-Québec"
+    applies_to: ["dhw_heat_pump", "air_water_heat_pump"]
+    replaces_energy: ["any"]           # s'applique peu importe l'énergie remplacée
+    calc:
+      type: "manual_check"             # le montant dépend du modèle précis (n° AHRI) et de sa capacité
+      typical_range_cad: [1000, 4000]  # ESTIMATION grossière pour simulation seulement
+      cap_cad: null                    # à confirmer — plusieurs sources donnent des plafonds différents
+    requires:
+      - "Être client résidentiel Hydro-Québec"
+      - "Appareil figurant sur la liste officielle des produits admissibles LogisVert"
+      - "Installation par un entrepreneur RBQ inscrit au programme LogisVert"
+      - "Demande soumise dans les 9 mois suivant l'installation"
+      - "Conserver facture détaillée + n° AHRI + photo de la plaque signalétique"
+    cumulable_with: ["renoclimat_enveloppe"]
+    confidence: "estimation"
+    source_url: "https://www.hydroquebec.com/residentiel/mieux-consommer/aides-financieres/logisvert/residentiel.html"
+    last_verified: "2026-09"
+    note: >
+      Le montant réel dépend du modèle exact (numéro AHRI) et de sa capacité.
+      Vérifie le montant précis sur le portail LogisVert avant de t'engager.
+
+  - id: renoclimat_enveloppe
+    name: "Rénoclimat — Amélioration de l'enveloppe (ne finance pas l'appareil lui-même)"
+    administrator: "Transition énergétique Québec (TEQ)"
+    applies_to: ["envelope_only"]
+    replaces_energy: ["any"]
+    calc:
+      type: "manual_check"
+      typical_range_cad: [0, 10000]
+      cap_cad: 10000
+    requires:
+      - "Évaluation énergétique par un conseiller certifié AVANT le début des travaux"
+      - "Deuxième évaluation après travaux pour confirmer le gain ÉnerGuide"
+      - "Ne finance pas la thermopompe ECS elle-même — seulement isolation/étanchéité/fenêtres"
+    cumulable_with: ["logisvert_chauffe_eau_thermopompe"]
+    confidence: "estimation"
+    source_url: "https://www.transitionenergetique.gouv.qc.ca/residentiel/programmes/renoclimat"
+    last_verified: "2026-09"
+    note: >
+      Pertinent seulement si le projet inclut aussi des travaux d'enveloppe.
+      Ne pas compter ce montant comme subvention directe pour la thermopompe ECS.
+
+  - id: camt_mazout
+    name: "CAMT — Conversion abordable du mazout vers thermopompe (ménages à revenu modeste)"
+    administrator: "Gouvernement du Québec"
+    applies_to: ["dhw_heat_pump", "air_water_heat_pump"]
+    replaces_energy: ["mazout"]
+    calc:
+      type: "fixed_capped"
+      cap_cad: 10000
+    requires:
+      - "Remplacement d'un système au mazout"
+      - "Revenu du ménage égal ou inférieur au revenu médian provincial"
+    cumulable_with: []
+    confidence: "estimation"
+    source_url: "https://www.quebec.ca/habitation-et-logement/renover/subventions-renovation"
+    last_verified: "2026-09"
+    note: "Vérifier l'admissibilité exacte (seuil de revenu, zone) avant simulation finale."
+
+  - id: bonification_multi_mesures
+    name: "Bonification LogisVert pour mesures combinées"
+    administrator: "Hydro-Québec"
+    applies_to: ["dhw_heat_pump", "air_water_heat_pump"]
+    replaces_energy: ["any"]
+    calc:
+      type: "percent_bonus"
+      percent: 5
+      applies_on: ["logisvert_chauffe_eau_thermopompe"]
+    requires:
+      - "Deux mesures admissibles ou plus déposées dans la même demande LogisVert"
+    cumulable_with: []
+    confidence: "estimation"
+    source_url: "https://www.hydroquebec.com/residentiel/mieux-consommer/aides-financieres/logisvert/residentiel.html"
+    last_verified: "2026-09"
+    note: "Bonification citée par plusieurs installateurs — à confirmer sur le portail officiel."
+
+energy_sources:
+  - id: electricite
+    label: "Électricité (plinthes / BC électrique)"
+  - id: gaz_naturel
+    label: "Gaz naturel"
+  - id: mazout
+    label: "Mazout"
+  - id: propane
+    label: "Propane"
+  - id: bois
+    label: "Bois"
+  - id: autre
+    label: "Autre / je ne sais pas"
