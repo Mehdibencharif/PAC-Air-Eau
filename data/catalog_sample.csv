@@ -1,0 +1,4 @@
+modele,fabricant,puissance_kw,cop,volume_reservoir_l,temp_min_C,temp_max_eau_C,niveau_sonore_dB,refrigerant,prix_estime_cad,source
+Exemple A (à remplacer),Fabricant X,3.0,3.2,270,-10,60,45,R134a,4500,"placeholder - remplace par une vraie fiche"
+Exemple B (à remplacer),Fabricant Y,4.5,3.5,300,-15,65,48,R744 (CO2),6200,"placeholder - remplace par une vraie fiche"
+Exemple C (à remplacer),Fabricant Z,2.5,3.0,190,-5,55,42,R134a,3800,"placeholder - remplace par une vraie fiche"
