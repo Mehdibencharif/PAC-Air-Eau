@@ -200,12 +200,15 @@ for src in energie:
         "propane": "Propane",
         "mazout": "Mazout",
         "autre": "Autre",
-    }[src]
+    }.get(src, src)
 
     with st.expander(f"Tarification — {label_source}", expanded=True):
 
         tarif_existant = st.session_state.tarifs.get(src, {})
 
+        # ---------------------------------------------------------------
+        # ÉLECTRICITÉ
+        # ---------------------------------------------------------------
         if src == "electricite":
 
             options_tarif = [
@@ -214,21 +217,26 @@ for src in energie:
                 "LG",
                 "DP",
                 "DM",
-                "Autre",
+                "Personnalisé",
                 "Je ne sais pas",
             ]
 
+            tarif_enregistre = tarif_existant.get("tarif", "G")
+
+            # Si le tarif enregistré n'est pas dans la liste,
+            # on sélectionne automatiquement "Personnalisé"
+            if tarif_enregistre not in options_tarif:
+                tarif_selection = "Personnalisé"
+            else:
+                tarif_selection = tarif_enregistre
+
             c1, c2 = st.columns(2)
 
-            tarif = c1.selectbox(
+            tarif_selection = c1.selectbox(
                 "Tarif électrique",
                 options=options_tarif,
-                index=(
-                    options_tarif.index(tarif_existant["tarif"])
-                    if tarif_existant.get("tarif") in options_tarif
-                    else 0
-                ),
-                key=f"tarif_{src}",
+                index=options_tarif.index(tarif_selection),
+                key=f"tarif_select_{src}",
             )
 
             cout_moyen = c2.number_input(
@@ -239,27 +247,49 @@ for src in energie:
                 key=f"cout_tarif_{src}",
             )
 
+            if tarif_selection == "Personnalisé":
+                tarif = st.text_input(
+                    "Nom du tarif personnalisé",
+                    value=(
+                        tarif_enregistre
+                        if tarif_enregistre not in options_tarif
+                        else ""
+                    ),
+                    placeholder="Ex. Tarif expérimental, contrat spécial...",
+                    key=f"tarif_perso_{src}",
+                )
+            else:
+                tarif = tarif_selection
+
+        # ---------------------------------------------------------------
+        # GAZ NATUREL
+        # ---------------------------------------------------------------
         elif src == "gaz_naturel":
 
             options_tarif = [
-                "Énergir — tarif général",
-                "Énergir — grande consommation",
+                "Tarif D1",
+                "Tarif D3",
+                "Tarif D4",
+                "Tarif D5",
                 "Contrat particulier",
-                "Autre",
+                "Personnalisé",
                 "Je ne sais pas",
             ]
 
+            tarif_enregistre = tarif_existant.get("tarif", "Tarif D1")
+
+            if tarif_enregistre not in options_tarif:
+                tarif_selection = "Personnalisé"
+            else:
+                tarif_selection = tarif_enregistre
+
             c1, c2 = st.columns(2)
 
-            tarif = c1.selectbox(
+            tarif_selection = c1.selectbox(
                 "Tarif gaz naturel",
                 options=options_tarif,
-                index=(
-                    options_tarif.index(tarif_existant["tarif"])
-                    if tarif_existant.get("tarif") in options_tarif
-                    else 0
-                ),
-                key=f"tarif_{src}",
+                index=options_tarif.index(tarif_selection),
+                key=f"tarif_select_{src}",
             )
 
             cout_moyen = c2.number_input(
@@ -270,6 +300,23 @@ for src in energie:
                 key=f"cout_tarif_{src}",
             )
 
+            if tarif_selection == "Personnalisé":
+                tarif = st.text_input(
+                    "Nom du tarif personnalisé",
+                    value=(
+                        tarif_enregistre
+                        if tarif_enregistre not in options_tarif
+                        else ""
+                    ),
+                    placeholder="Ex. Tarif industriel spécial...",
+                    key=f"tarif_perso_{src}",
+                )
+            else:
+                tarif = tarif_selection
+
+        # ---------------------------------------------------------------
+        # PROPANE / MAZOUT
+        # ---------------------------------------------------------------
         elif src in ["propane", "mazout"]:
 
             c1, c2 = st.columns(2)
@@ -277,6 +324,7 @@ for src in energie:
             tarif = c1.text_input(
                 "Tarif / fournisseur",
                 value=tarif_existant.get("tarif", ""),
+                placeholder="Ex. Contrat fournisseur",
                 key=f"tarif_{src}",
             )
 
@@ -288,6 +336,9 @@ for src in energie:
                 key=f"cout_tarif_{src}",
             )
 
+        # ---------------------------------------------------------------
+        # AUTRE
+        # ---------------------------------------------------------------
         else:
 
             c1, c2 = st.columns(2)
@@ -295,6 +346,7 @@ for src in energie:
             tarif = c1.text_input(
                 "Tarif / description",
                 value=tarif_existant.get("tarif", ""),
+                placeholder="Décrire le tarif",
                 key=f"tarif_{src}",
             )
 
@@ -306,6 +358,9 @@ for src in energie:
                 key=f"cout_tarif_{src}",
             )
 
+        # ---------------------------------------------------------------
+        # ENREGISTREMENT
+        # ---------------------------------------------------------------
         st.session_state.tarifs[src] = {
             "tarif": tarif,
             "cout_moyen": cout_moyen,
