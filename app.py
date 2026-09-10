@@ -181,6 +181,136 @@ if st.session_state.step == 1:
 
     st.divider()
 
+    st.divider()
+
+# -----------------------------------------------------------------------
+# TARIFICATION
+# -----------------------------------------------------------------------
+
+st.markdown("### 💲 Tarification énergétique")
+
+if "tarifs" not in st.session_state:
+    st.session_state.tarifs = {}
+
+for src in energie:
+
+    label_source = {
+        "electricite": "Électricité",
+        "gaz_naturel": "Gaz naturel",
+        "propane": "Propane",
+        "mazout": "Mazout",
+        "autre": "Autre",
+    }[src]
+
+    with st.expander(f"Tarification — {label_source}", expanded=True):
+
+        tarif_existant = st.session_state.tarifs.get(src, {})
+
+        if src == "electricite":
+
+            options_tarif = [
+                "G",
+                "M",
+                "LG",
+                "DP",
+                "DM",
+                "Autre",
+                "Je ne sais pas",
+            ]
+
+            c1, c2 = st.columns(2)
+
+            tarif = c1.selectbox(
+                "Tarif électrique",
+                options=options_tarif,
+                index=(
+                    options_tarif.index(tarif_existant["tarif"])
+                    if tarif_existant.get("tarif") in options_tarif
+                    else 0
+                ),
+                key=f"tarif_{src}",
+            )
+
+            cout_moyen = c2.number_input(
+                "Coût moyen réel ($/kWh)",
+                min_value=0.0,
+                value=float(tarif_existant.get("cout_moyen", 0.110)),
+                format="%.4f",
+                key=f"cout_tarif_{src}",
+            )
+
+        elif src == "gaz_naturel":
+
+            options_tarif = [
+                "Énergir — tarif général",
+                "Énergir — grande consommation",
+                "Contrat particulier",
+                "Autre",
+                "Je ne sais pas",
+            ]
+
+            c1, c2 = st.columns(2)
+
+            tarif = c1.selectbox(
+                "Tarif gaz naturel",
+                options=options_tarif,
+                index=(
+                    options_tarif.index(tarif_existant["tarif"])
+                    if tarif_existant.get("tarif") in options_tarif
+                    else 0
+                ),
+                key=f"tarif_{src}",
+            )
+
+            cout_moyen = c2.number_input(
+                "Coût moyen réel ($/m³)",
+                min_value=0.0,
+                value=float(tarif_existant.get("cout_moyen", 0.420)),
+                format="%.4f",
+                key=f"cout_tarif_{src}",
+            )
+
+        elif src in ["propane", "mazout"]:
+
+            c1, c2 = st.columns(2)
+
+            tarif = c1.text_input(
+                "Tarif / fournisseur",
+                value=tarif_existant.get("tarif", ""),
+                key=f"tarif_{src}",
+            )
+
+            cout_moyen = c2.number_input(
+                "Coût moyen réel ($/L)",
+                min_value=0.0,
+                value=float(tarif_existant.get("cout_moyen", 0.0)),
+                format="%.4f",
+                key=f"cout_tarif_{src}",
+            )
+
+        else:
+
+            c1, c2 = st.columns(2)
+
+            tarif = c1.text_input(
+                "Tarif / description",
+                value=tarif_existant.get("tarif", ""),
+                key=f"tarif_{src}",
+            )
+
+            cout_moyen = c2.number_input(
+                "Coût moyen réel",
+                min_value=0.0,
+                value=float(tarif_existant.get("cout_moyen", 0.0)),
+                format="%.4f",
+                key=f"cout_tarif_{src}",
+            )
+
+        st.session_state.tarifs[src] = {
+            "tarif": tarif,
+            "cout_moyen": cout_moyen,
+        }
+
     # -----------------------------------------------------------------------
     # ÉQUIPEMENT EXISTANT
     # -----------------------------------------------------------------------
