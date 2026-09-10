@@ -30,12 +30,31 @@ st.write(" → ".join(f"**{s}**" if i + 1 == st.session_state.step else s for i,
 st.divider()
 
 # ---------------------------------------------------------------------------
-# ÉTAPE 1 — Énergie actuelle
+# ÉTAPE 1 — Type de bâtiment + énergie(s) actuelle(s)
 # ---------------------------------------------------------------------------
 if st.session_state.step == 1:
-    st.subheader("1. Quelle énergie utilises-tu actuellement pour l'eau chaude ?")
-    energie = st.radio(
-        "Source d'énergie à remplacer",
+    st.subheader("1. Quel type de bâtiment et quelle(s) énergie(s) utilises-tu actuellement ?")
+
+    type_batiment = st.radio(
+        "Type de bâtiment",
+        options=["residentiel_unifamilial", "residentiel_multilogement", "commercial_institutionnel"],
+        format_func=lambda x: {
+            "residentiel_unifamilial": "Résidentiel — unifamilial",
+            "residentiel_multilogement": "Résidentiel — multilogement (duplex, triplex et +)",
+            "commercial_institutionnel": "Commercial / institutionnel",
+        }[x],
+        horizontal=True,
+    )
+    if type_batiment == "commercial_institutionnel":
+        st.warning(
+            "Cet outil est calibré pour le résidentiel (dimensionnement ECS et règles de subvention). "
+            "Pour un projet commercial/institutionnel, les résultats de puissance resteront indicatifs "
+            "mais les subventions résidentielles ne s'appliqueront pas — programmes distincts à consulter."
+        )
+
+    energie = st.multiselect(
+        "Source(s) d'énergie actuelle(s) à remplacer — sélectionne-en plusieurs si le site est bi-énergie "
+        "(ex: électricité + gaz naturel)",
         options=["electricite", "gaz_naturel", "mazout", "propane", "bois", "autre"],
         format_func=lambda x: {
             "electricite": "Électricité",
@@ -45,17 +64,28 @@ if st.session_state.step == 1:
             "bois": "Bois",
             "autre": "Autre / je ne sais pas",
         }[x],
-        index=0,
+        default=["electricite"],
     )
+    if not energie:
+        st.error("Sélectionne au moins une source d'énergie.")
+
+    if set(energie) >= {"electricite", "gaz_naturel"}:
+        st.info(
+            "Site bi-énergie détecté (électricité + gaz naturel). Vérifie aussi le tarif biénergie "
+            "Hydro-Québec/Énergir — distinct des subventions à l'achat de la thermopompe, mais peut "
+            "réduire ta facture d'exploitation si tu conserves une bascule vers le gaz par grand froid."
+        )
+
     col1, col2 = st.columns(2)
     revenu_sous_median = col1.checkbox("Revenu du ménage ≤ revenu médian provincial (pertinent si mazout)")
     combine_mesures = col2.checkbox("Je prévois aussi d'autres travaux d'efficacité énergétique en même temps")
 
     st.session_state.energie = energie
+    st.session_state.type_batiment = type_batiment
     st.session_state.revenu_sous_median = revenu_sous_median
     st.session_state.combine_mesures = combine_mesures
 
-    if st.button("Suivant →", type="primary"):
+    if st.button("Suivant →", type="primary", disabled=not energie):
         st.session_state.step = 2
         st.rerun()
 
@@ -144,7 +174,7 @@ elif st.session_state.step == 3:
 
             with st.expander(f"📄 {f.name}", expanded=True):
                 col1, col2, col3, col4 = st.columns(4)
-                nom_modele = col1.text_input(f"Nom du modèle", value=f.name.replace(".pdf", ""), key=f"nom_{f.name}")
+                nom_modele = col1.text_input("Nom du modèle", value=f.name.replace(".pdf", ""), key=f"nom_{f.name}")
                 puissance = col2.number_input("Puissance (kW)", value=specs.puissance_kw or 0.0, key=f"p_{f.name}")
                 cop = col3.number_input("COP", value=specs.cop or 0.0, key=f"cop_{f.name}")
                 prix = col4.number_input("Prix estimé (CAD)", value=0.0, key=f"prix_{f.name}")
@@ -158,7 +188,7 @@ elif st.session_state.step == 3:
                         for champ, ligne in specs.lignes_source.items():
                             st.write(f"**{champ}** : `{ligne}`")
 
-                if st.button(f"Ajouter au catalogue de comparaison", key=f"add_{f.name}"):
+                if st.button("Ajouter au catalogue de comparaison", key=f"add_{f.name}"):
                     specs.puissance_kw = puissance or specs.puissance_kw
                     specs.cop = cop or specs.cop
                     ligne = specs_vers_ligne(specs, nom_modele=nom_modele, prix_estime=prix or None)
@@ -225,8 +255,9 @@ elif st.session_state.step == 4:
 
     with tab2:
         ctx = ContexteSubvention(
-            energie_actuelle=st.session_state.energie,
+            energie_actuelle=st.session_state.energie,          # <-- liste (mix), plus une seule chaîne
             type_appareil="dhw_heat_pump",
+            type_batiment=st.session_state.type_batiment,
             revenu_sous_median=st.session_state.revenu_sous_median,
             combine_plusieurs_mesures=st.session_state.combine_mesures,
         )
