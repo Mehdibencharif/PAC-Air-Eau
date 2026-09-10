@@ -6,6 +6,7 @@ import streamlit as st
 
 from modules.needs import estimer_besoin, PROFILS_L_PAR_JOUR
 from modules.pdf_extractor import extraire_specs, champs_manquants
+from modules.bill_extractor import extraire_prix_facture
 from modules.catalog import charger_catalogue, specs_vers_ligne, ajouter_modele
 from modules.subsidies import ContexteSubvention, simuler, total_estime
 from modules.recommender import filtrer_et_scorer
@@ -24,8 +25,8 @@ if "catalogue" not in st.session_state:
 st.title("💧 Sélecteur de thermopompe air-eau pour eau chaude sanitaire")
 st.caption("Outil d'aide à la décision — Québec. Les montants de subvention affichés sont des estimations à valider auprès des programmes officiels.")
 
-steps = ["1. Énergie actuelle", "2. Besoin en ECS", "3. Fiches techniques", "4. Résultats"]
-st.progress((st.session_state.step - 1) / 3)
+steps = ["1. Bâtiment & énergie", "2. Prix de l'énergie", "3. Besoin en ECS", "4. Fiches techniques", "5. Résultats"]
+st.progress((st.session_state.step - 1) / 4)
 st.write(" → ".join(f"**{s}**" if i + 1 == st.session_state.step else s for i, s in enumerate(steps)))
 st.divider()
 
@@ -93,10 +94,110 @@ if st.session_state.step == 1:
         st.rerun()
 
 # ---------------------------------------------------------------------------
-# ÉTAPE 2 — Besoin en ECS
+# ÉTAPE 2 — Prix de l'énergie (à partir de tes factures)
 # ---------------------------------------------------------------------------
 elif st.session_state.step == 2:
-    st.subheader("2. Quel est ton besoin en eau chaude sanitaire ?")
+    st.subheader("2. Dépose tes factures pour calculer le prix réel de l'énergie")
+    st.caption(
+        "PDF téléchargé du site du fournisseur ou photo/scan de la facture papier — les deux sont "
+        "acceptés. L'outil tente de détecter Hydro-Québec (kWh) ou Énergir (m³), d'en extraire la "
+        "consommation et le montant facturé, puis calcule un $/kWh ou $/m³. Les photos passent par "
+        "une reconnaissance de texte (OCR) qui peut se tromper — vérifie toujours les valeurs avant "
+        "d'enregistrer. Cette étape est optionnelle : tu peux aussi passer et saisir un prix manuellement."
+    )
+
+    if "prix_energie" not in st.session_state:
+        st.session_state.prix_energie = {}  # ex: {"electricite": {...}, "gaz_naturel": {...}}
+
+    factures = st.file_uploader(
+        "Factures (PDF ou photo JPG/PNG)",
+        type=["pdf", "jpg", "jpeg", "png"],
+        accept_multiple_files=True,
+        key="upload_factures",
+    )
+
+    if factures:
+        for f in factures:
+            suffix = os.path.splitext(f.name)[1].lower()
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                tmp.write(f.read())
+                tmp_path = tmp.name
+
+            try:
+                prix = extraire_prix_facture(tmp_path, nom_fichier=f.name)
+            except Exception as e:
+                st.error(f"Erreur d'extraction pour {f.name} : {e}")
+                continue
+
+            with st.expander(f"🧾 {f.name} — méthode de lecture : {prix.methode}", expanded=True):
+                options_src = ["electricite", "gaz_naturel", "propane", "mazout", "autre"]
+                col1, col2, col3 = st.columns(3)
+                source_detectee = col1.selectbox(
+                    "Source d'énergie de cette facture",
+                    options=options_src,
+                    index=options_src.index(prix.type_source) if prix.type_source in options_src else 4,
+                    key=f"src_{f.name}",
+                )
+                unite = "kWh" if source_detectee == "electricite" else "m³" if source_detectee == "gaz_naturel" else "unité"
+                consommation = col2.number_input(
+                    f"Consommation ({unite})", value=prix.consommation or 0.0, key=f"conso_{f.name}",
+                )
+                montant = col3.number_input("Montant facturé ($)", value=prix.montant_total or 0.0, key=f"mnt_{f.name}")
+
+                if consommation > 0:
+                    prix_unitaire = montant / consommation
+                    st.success(f"💲 Prix calculé : **{prix_unitaire:.4f} $/{unite}**")
+                else:
+                    st.warning("Renseigne une consommation > 0 pour calculer le prix unitaire.")
+                    prix_unitaire = None
+
+                manquants = []
+                if prix.consommation is None:
+                    manquants.append("consommation")
+                if prix.montant_total is None:
+                    manquants.append("montant total")
+                if manquants:
+                    st.warning(f"Non détecté automatiquement, à vérifier/compléter : {', '.join(manquants)}")
+                if prix.methode in ("ocr_image", "ocr_pdf_scanne"):
+                    st.caption("⚠️ Valeurs lues par OCR sur image — plus sujettes à erreur qu'un PDF texte, vérifie-les bien.")
+
+                if prix.lignes_source:
+                    with st.popover("Voir les lignes sources détectées"):
+                        for champ, ligne in prix.lignes_source.items():
+                            st.write(f"**{champ}** : `{ligne}`")
+
+                if st.button("Enregistrer ce prix", key=f"save_{f.name}"):
+                    st.session_state.prix_energie[source_detectee] = {
+                        "prix_unitaire": prix_unitaire,
+                        "unite": unite,
+                        "montant_total": montant,
+                        "consommation": consommation,
+                        "fichier_source": f.name,
+                    }
+                    st.success(f"Prix enregistré pour {source_detectee} : {prix_unitaire:.4f} $/{unite}" if prix_unitaire else "Prix enregistré (consommation manquante — à corriger).")
+
+    if st.session_state.prix_energie:
+        st.divider()
+        st.write("**Prix enregistrés pour ce site :**")
+        for src, d in st.session_state.prix_energie.items():
+            if d["prix_unitaire"] is not None:
+                st.write(f"- **{src}** : {d['prix_unitaire']:.4f} $/{d['unite']}  _(facture : {d['fichier_source']})_")
+    else:
+        st.info("Aucun prix enregistré pour l'instant.")
+
+    c1, c2 = st.columns(2)
+    if c1.button("← Précédent", key="prev_2"):
+        st.session_state.step = 1
+        st.rerun()
+    if c2.button("Suivant →", type="primary", key="next_2"):
+        st.session_state.step = 3
+        st.rerun()
+
+# ---------------------------------------------------------------------------
+# ÉTAPE 3 — Besoin en ECS
+# ---------------------------------------------------------------------------
+elif st.session_state.step == 3:
+    st.subheader("3. Quel est ton besoin en eau chaude sanitaire ?")
     methode = st.radio(
         "Méthode d'estimation",
         options=["personnes", "profil", "manuel"],
@@ -142,18 +243,18 @@ elif st.session_state.step == 2:
     st.session_state.temp_design_hiver = temp_design_hiver
 
     c1, c2 = st.columns(2)
-    if c1.button("← Précédent"):
-        st.session_state.step = 1
+    if c1.button("← Précédent", key="prev_3"):
+        st.session_state.step = 2
         st.rerun()
-    if c2.button("Suivant →", type="primary"):
-        st.session_state.step = 3
+    if c2.button("Suivant →", type="primary", key="next_3"):
+        st.session_state.step = 4
         st.rerun()
 
 # ---------------------------------------------------------------------------
-# ÉTAPE 3 — Fiches techniques
+# ÉTAPE 4 — Fiches techniques
 # ---------------------------------------------------------------------------
-elif st.session_state.step == 3:
-    st.subheader("3. Ajoute des fiches techniques (PDF) — optionnel")
+elif st.session_state.step == 4:
+    st.subheader("4. Ajoute des fiches techniques (PDF) — optionnel")
     st.caption(
         "L'extraction se fait par reconnaissance de motifs texte (COP, puissance, "
         "réservoir, plage de température, bruit, réfrigérant). Si une fiche est "
@@ -204,18 +305,18 @@ elif st.session_state.step == 3:
     st.caption("Les lignes 'Exemple A/B/C' sont des placeholders — supprime-les ou ignore-les dans le comparatif si tu n'as que tes propres fiches.")
 
     c1, c2 = st.columns(2)
-    if c1.button("← Précédent"):
-        st.session_state.step = 2
+    if c1.button("← Précédent", key="prev_4"):
+        st.session_state.step = 3
         st.rerun()
-    if c2.button("Voir les résultats →", type="primary"):
-        st.session_state.step = 4
+    if c2.button("Voir les résultats →", type="primary", key="next_4"):
+        st.session_state.step = 5
         st.rerun()
 
 # ---------------------------------------------------------------------------
-# ÉTAPE 4 — Résultats : recommandation + subventions
+# ÉTAPE 5 — Résultats : recommandation + subventions
 # ---------------------------------------------------------------------------
-elif st.session_state.step == 4:
-    st.subheader("4. Recommandation et estimation des subventions")
+elif st.session_state.step == 5:
+    st.subheader("5. Recommandation et estimation des subventions")
 
     besoin = st.session_state.besoin
     temp_design = st.session_state.temp_design_hiver
@@ -287,6 +388,6 @@ elif st.session_state.step == 4:
                     st.write(f"[Source officielle]({r.source_url}) · Confiance des données : {r.confidence} ")
 
     st.divider()
-    if st.button("← Précédent"):
-        st.session_state.step = 3
+    if st.button("← Précédent", key="prev_5"):
+        st.session_state.step = 4
         st.rerun()
