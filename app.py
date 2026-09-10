@@ -1,154 +1,4 @@
-import os
-import tempfile
-
-import pandas as pd
-import streamlit as st
-
-from modules.needs import estimer_besoin, PROFILS_L_PAR_JOUR
-from modules.pdf_extractor import extraire_specs, champs_manquants
-from modules.bill_extractor import extraire_prix_facture
-from modules.catalog import charger_catalogue, specs_vers_ligne, ajouter_modele
-from modules.subsidies import ContexteSubvention, simuler, total_estime
-from modules.recommender import filtrer_et_scorer
-
-DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
-CATALOG_CSV = os.path.join(DATA_DIR, "catalog_sample.csv")
-SUBSIDIES_YAML = os.path.join(DATA_DIR, "subsidies_qc.yaml")
-
-ENERGIE_LABELS = {
-    "electricite": "Électricité",
-    "gaz_naturel": "Gaz naturel",
-    "mazout": "Mazout",
-    "propane": "Propane",
-    "bois": "Bois",
-    "autre": "Autre / je ne sais pas",
-}
-
-TYPES_EQUIPEMENT = {
-    "electricite": ["Chauffe-eau électrique", "Thermopompe existante", "Chaudière électrique",
-                    "Plinthes / convecteurs", "Autre"],
-    "gaz_naturel": ["Chaudière au gaz (standard)", "Chaudière au gaz (condensation)",
-                    "Chauffe-eau au gaz", "Autre"],
-    "mazout": ["Chaudière au mazout", "Fournaise au mazout", "Autre"],
-    "propane": ["Chaudière au propane", "Chauffe-eau au propane", "Autre"],
-    "bois": ["Chaudière à biomasse", "Autre"],
-    "autre": ["Autre / à préciser"],
-}
-
-# Rendements typiques (%) préremplis à titre indicatif — à corriger si la valeur
-# réelle de l'équipement (plaque signalétique, rapport d'efficacité) est connue.
-RENDEMENT_TYPIQUE = {
-    "Chaudière au gaz (standard)": 80.0,
-    "Chaudière au gaz (condensation)": 95.0,
-    "Chauffe-eau au gaz": 80.0,
-    "Chaudière au mazout": 82.0,
-    "Fournaise au mazout": 80.0,
-    "Chauffe-eau électrique": 98.0,
-    "Thermopompe existante": 250.0,  # COP typique ~2.5 exprimé en "rendement" équivalent
-    "Chaudière électrique": 99.0,
-    "Plinthes / convecteurs": 100.0,
-    "Chaudière au propane": 82.0,
-    "Chauffe-eau au propane": 78.0,
-    "Chaudière à biomasse": 70.0,
-}
-
-UNITE_CONSO = {
-    "electricite": "kWh/an",
-    "gaz_naturel": "m³/an",
-    "mazout": "L/an",
-    "propane": "L/an",
-    "bois": "cordes/an",
-    "autre": "unité/an",
-}
-
-st.set_page_config(page_title="Sélecteur thermopompe air-eau ECS (Québec)", layout="wide")
-
-if "step" not in st.session_state:
-    st.session_state.step = 1
-if "catalogue" not in st.session_state:
-    st.session_state.catalogue = charger_catalogue(CATALOG_CSV)
-
-st.title("💧 Sélecteur de thermopompe air-eau pour eau chaude sanitaire")
-st.caption("Outil d'aide à la décision — Québec. Les montants de subvention affichés sont des estimations à valider auprès des programmes officiels.")
-
-steps = ["1. Bâtiment & énergie", "2. Prix de l'énergie", "3. Besoin en ECS", "4. Fiches techniques", "5. Résultats"]
-st.progress((st.session_state.step - 1) / 4)
-st.write(" → ".join(f"**{s}**" if i + 1 == st.session_state.step else s for i, s in enumerate(steps)))
-st.divider()
-
-# ---------------------------------------------------------------------------
-# ÉTAPE 1 — IDENTIFICATION DU SITE ET SITUATION DE RÉFÉRENCE
-# ---------------------------------------------------------------------------
-
-if st.session_state.step == 1:
-
-    st.subheader("1. Identification du bâtiment et situation énergétique actuelle")
-
-    # -----------------------------------------------------------------------
-    # IDENTIFICATION
-    # -----------------------------------------------------------------------
-
-    st.markdown("### 🏢 Identification du bâtiment")
-
-    nom_batiment = st.text_input(
-        "Nom du bâtiment / projet",
-        value=st.session_state.get("nom_batiment", "Bâtiment 1"),
-        placeholder="Ex. Usine Victoriaville - Salle mécanique 1",
-    )
-
-    st.divider()
-
-    # -----------------------------------------------------------------------
-    # MARCHÉ
-    # -----------------------------------------------------------------------
-
-    st.markdown("### Marché")
-
-    type_batiment = st.radio(
-        "Sélectionner le secteur",
-        options=[
-            "commercial_institutionnel",
-            "industriel",
-            "agricole",
-        ],
-        format_func=lambda x: {
-            "commercial_institutionnel": "Commercial & institutionnel",
-            "industriel": "Industriel",
-            "agricole": "Agricole",
-        }[x],
-        horizontal=True,
-        label_visibility="collapsed",
-    )
-
-    st.divider()
-
-    # -----------------------------------------------------------------------
-    # NATURE DU PROJET
-    # -----------------------------------------------------------------------
-
-    st.markdown("### Nature du projet")
-
-    nature_projet = st.radio(
-        "Nature",
-        options=[
-            "batiment_existant",
-            "nouveau_batiment",
-            "agrandissement",
-            "renovation_majeure",
-        ],
-        format_func=lambda x: {
-            "batiment_existant": "Bâtiment existant",
-            "nouveau_batiment": "Nouveau bâtiment",
-            "agrandissement": "Agrandissement",
-            "renovation_majeure": "Rénovation majeure",
-        }[x],
-        horizontal=True,
-        label_visibility="collapsed",
-    )
-
-    st.divider()
-
-    # -----------------------------------------------------------------------
+# -----------------------------------------------------------------------
     # SOURCE D'ÉNERGIE ACTUELLE
     # -----------------------------------------------------------------------
 
@@ -163,13 +13,7 @@ if st.session_state.step == 1:
             "mazout",
             "autre",
         ],
-        format_func=lambda x: {
-            "electricite": "Électricité",
-            "gaz_naturel": "Gaz naturel",
-            "propane": "Propane",
-            "mazout": "Mazout",
-            "autre": "Autre",
-        }[x],
+        format_func=lambda x: ENERGIE_LABELS[x],
         default=st.session_state.get("energie", ["electricite"]),
     )
 
@@ -181,190 +25,182 @@ if st.session_state.step == 1:
 
     st.divider()
 
-    st.divider()
+    # -----------------------------------------------------------------------
+    # TARIFICATION
+    # -----------------------------------------------------------------------
 
-# -----------------------------------------------------------------------
-# TARIFICATION
-# -----------------------------------------------------------------------
+    st.markdown("### 💲 Tarification énergétique")
 
-st.markdown("### 💲 Tarification énergétique")
+    if "tarifs" not in st.session_state:
+        st.session_state.tarifs = {}
 
-if "tarifs" not in st.session_state:
-    st.session_state.tarifs = {}
+    for src in energie:
 
-for src in energie:
+        label_source = ENERGIE_LABELS.get(src, src)
 
-    label_source = {
-        "electricite": "Électricité",
-        "gaz_naturel": "Gaz naturel",
-        "propane": "Propane",
-        "mazout": "Mazout",
-        "autre": "Autre",
-    }.get(src, src)
+        with st.expander(f"Tarification — {label_source}", expanded=True):
 
-    with st.expander(f"Tarification — {label_source}", expanded=True):
+            tarif_existant = st.session_state.tarifs.get(src, {})
 
-        tarif_existant = st.session_state.tarifs.get(src, {})
+            # ---------------------------------------------------------------
+            # ÉLECTRICITÉ
+            # ---------------------------------------------------------------
+            if src == "electricite":
 
-        # ---------------------------------------------------------------
-        # ÉLECTRICITÉ
-        # ---------------------------------------------------------------
-        if src == "electricite":
+                options_tarif = [
+                    "G",
+                    "M",
+                    "LG",
+                    "DP",
+                    "DM",
+                    "Personnalisé",
+                    "Je ne sais pas",
+                ]
 
-            options_tarif = [
-                "G",
-                "M",
-                "LG",
-                "DP",
-                "DM",
-                "Personnalisé",
-                "Je ne sais pas",
-            ]
+                tarif_enregistre = tarif_existant.get("tarif", "G")
 
-            tarif_enregistre = tarif_existant.get("tarif", "G")
+                # Si le tarif enregistré n'est pas dans la liste,
+                # on sélectionne automatiquement "Personnalisé"
+                if tarif_enregistre not in options_tarif:
+                    tarif_selection = "Personnalisé"
+                else:
+                    tarif_selection = tarif_enregistre
 
-            # Si le tarif enregistré n'est pas dans la liste,
-            # on sélectionne automatiquement "Personnalisé"
-            if tarif_enregistre not in options_tarif:
-                tarif_selection = "Personnalisé"
-            else:
-                tarif_selection = tarif_enregistre
+                c1, c2 = st.columns(2)
 
-            c1, c2 = st.columns(2)
-
-            tarif_selection = c1.selectbox(
-                "Tarif électrique",
-                options=options_tarif,
-                index=options_tarif.index(tarif_selection),
-                key=f"tarif_select_{src}",
-            )
-
-            cout_moyen = c2.number_input(
-                "Coût moyen réel ($/kWh)",
-                min_value=0.0,
-                value=float(tarif_existant.get("cout_moyen", 0.110)),
-                format="%.4f",
-                key=f"cout_tarif_{src}",
-            )
-
-            if tarif_selection == "Personnalisé":
-                tarif = st.text_input(
-                    "Nom du tarif personnalisé",
-                    value=(
-                        tarif_enregistre
-                        if tarif_enregistre not in options_tarif
-                        else ""
-                    ),
-                    placeholder="Ex. Tarif expérimental, contrat spécial...",
-                    key=f"tarif_perso_{src}",
+                tarif_selection = c1.selectbox(
+                    "Tarif électrique",
+                    options=options_tarif,
+                    index=options_tarif.index(tarif_selection),
+                    key=f"tarif_select_{src}",
                 )
-            else:
-                tarif = tarif_selection
 
-        # ---------------------------------------------------------------
-        # GAZ NATUREL
-        # ---------------------------------------------------------------
-        elif src == "gaz_naturel":
-
-            options_tarif = [
-                "Tarif D1",
-                "Tarif D3",
-                "Tarif D4",
-                "Tarif D5",
-                "Contrat particulier",
-                "Personnalisé",
-                "Je ne sais pas",
-            ]
-
-            tarif_enregistre = tarif_existant.get("tarif", "Tarif D1")
-
-            if tarif_enregistre not in options_tarif:
-                tarif_selection = "Personnalisé"
-            else:
-                tarif_selection = tarif_enregistre
-
-            c1, c2 = st.columns(2)
-
-            tarif_selection = c1.selectbox(
-                "Tarif gaz naturel",
-                options=options_tarif,
-                index=options_tarif.index(tarif_selection),
-                key=f"tarif_select_{src}",
-            )
-
-            cout_moyen = c2.number_input(
-                "Coût moyen réel ($/m³)",
-                min_value=0.0,
-                value=float(tarif_existant.get("cout_moyen", 0.420)),
-                format="%.4f",
-                key=f"cout_tarif_{src}",
-            )
-
-            if tarif_selection == "Personnalisé":
-                tarif = st.text_input(
-                    "Nom du tarif personnalisé",
-                    value=(
-                        tarif_enregistre
-                        if tarif_enregistre not in options_tarif
-                        else ""
-                    ),
-                    placeholder="Ex. Tarif industriel spécial...",
-                    key=f"tarif_perso_{src}",
+                cout_moyen = c2.number_input(
+                    "Coût moyen réel ($/kWh)",
+                    min_value=0.0,
+                    value=float(tarif_existant.get("cout_moyen", 0.110)),
+                    format="%.4f",
+                    key=f"cout_tarif_{src}",
                 )
+
+                if tarif_selection == "Personnalisé":
+                    tarif = st.text_input(
+                        "Nom du tarif personnalisé",
+                        value=(
+                            tarif_enregistre
+                            if tarif_enregistre not in options_tarif
+                            else ""
+                        ),
+                        placeholder="Ex. Tarif expérimental, contrat spécial...",
+                        key=f"tarif_perso_{src}",
+                    )
+                else:
+                    tarif = tarif_selection
+
+            # ---------------------------------------------------------------
+            # GAZ NATUREL
+            # ---------------------------------------------------------------
+            elif src == "gaz_naturel":
+
+                options_tarif = [
+                    "Tarif D1",
+                    "Tarif D3",
+                    "Tarif D4",
+                    "Tarif D5",
+                    "Contrat particulier",
+                    "Personnalisé",
+                    "Je ne sais pas",
+                ]
+
+                tarif_enregistre = tarif_existant.get("tarif", "Tarif D1")
+
+                if tarif_enregistre not in options_tarif:
+                    tarif_selection = "Personnalisé"
+                else:
+                    tarif_selection = tarif_enregistre
+
+                c1, c2 = st.columns(2)
+
+                tarif_selection = c1.selectbox(
+                    "Tarif gaz naturel",
+                    options=options_tarif,
+                    index=options_tarif.index(tarif_selection),
+                    key=f"tarif_select_{src}",
+                )
+
+                cout_moyen = c2.number_input(
+                    "Coût moyen réel ($/m³)",
+                    min_value=0.0,
+                    value=float(tarif_existant.get("cout_moyen", 0.420)),
+                    format="%.4f",
+                    key=f"cout_tarif_{src}",
+                )
+
+                if tarif_selection == "Personnalisé":
+                    tarif = st.text_input(
+                        "Nom du tarif personnalisé",
+                        value=(
+                            tarif_enregistre
+                            if tarif_enregistre not in options_tarif
+                            else ""
+                        ),
+                        placeholder="Ex. Tarif industriel spécial...",
+                        key=f"tarif_perso_{src}",
+                    )
+                else:
+                    tarif = tarif_selection
+
+            # ---------------------------------------------------------------
+            # PROPANE / MAZOUT
+            # ---------------------------------------------------------------
+            elif src in ["propane", "mazout"]:
+
+                c1, c2 = st.columns(2)
+
+                tarif = c1.text_input(
+                    "Tarif / fournisseur",
+                    value=tarif_existant.get("tarif", ""),
+                    placeholder="Ex. Contrat fournisseur",
+                    key=f"tarif_{src}",
+                )
+
+                cout_moyen = c2.number_input(
+                    "Coût moyen réel ($/L)",
+                    min_value=0.0,
+                    value=float(tarif_existant.get("cout_moyen", 0.0)),
+                    format="%.4f",
+                    key=f"cout_tarif_{src}",
+                )
+
+            # ---------------------------------------------------------------
+            # AUTRE
+            # ---------------------------------------------------------------
             else:
-                tarif = tarif_selection
 
-        # ---------------------------------------------------------------
-        # PROPANE / MAZOUT
-        # ---------------------------------------------------------------
-        elif src in ["propane", "mazout"]:
+                c1, c2 = st.columns(2)
 
-            c1, c2 = st.columns(2)
+                tarif = c1.text_input(
+                    "Tarif / description",
+                    value=tarif_existant.get("tarif", ""),
+                    placeholder="Décrire le tarif",
+                    key=f"tarif_{src}",
+                )
 
-            tarif = c1.text_input(
-                "Tarif / fournisseur",
-                value=tarif_existant.get("tarif", ""),
-                placeholder="Ex. Contrat fournisseur",
-                key=f"tarif_{src}",
-            )
+                cout_moyen = c2.number_input(
+                    "Coût moyen réel",
+                    min_value=0.0,
+                    value=float(tarif_existant.get("cout_moyen", 0.0)),
+                    format="%.4f",
+                    key=f"cout_tarif_{src}",
+                )
 
-            cout_moyen = c2.number_input(
-                "Coût moyen réel ($/L)",
-                min_value=0.0,
-                value=float(tarif_existant.get("cout_moyen", 0.0)),
-                format="%.4f",
-                key=f"cout_tarif_{src}",
-            )
-
-        # ---------------------------------------------------------------
-        # AUTRE
-        # ---------------------------------------------------------------
-        else:
-
-            c1, c2 = st.columns(2)
-
-            tarif = c1.text_input(
-                "Tarif / description",
-                value=tarif_existant.get("tarif", ""),
-                placeholder="Décrire le tarif",
-                key=f"tarif_{src}",
-            )
-
-            cout_moyen = c2.number_input(
-                "Coût moyen réel",
-                min_value=0.0,
-                value=float(tarif_existant.get("cout_moyen", 0.0)),
-                format="%.4f",
-                key=f"cout_tarif_{src}",
-            )
-
-        # ---------------------------------------------------------------
-        # ENREGISTREMENT
-        # ---------------------------------------------------------------
-        st.session_state.tarifs[src] = {
-            "tarif": tarif,
-            "cout_moyen": cout_moyen,
-        }
+            # ---------------------------------------------------------------
+            # ENREGISTREMENT
+            # ---------------------------------------------------------------
+            st.session_state.tarifs[src] = {
+                "tarif": tarif,
+                "cout_moyen": cout_moyen,
+            }
 
     # -----------------------------------------------------------------------
     # ÉQUIPEMENT EXISTANT
