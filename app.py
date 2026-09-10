@@ -15,6 +15,52 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 CATALOG_CSV = os.path.join(DATA_DIR, "catalog_sample.csv")
 SUBSIDIES_YAML = os.path.join(DATA_DIR, "subsidies_qc.yaml")
 
+ENERGIE_LABELS = {
+    "electricite": "Électricité",
+    "gaz_naturel": "Gaz naturel",
+    "mazout": "Mazout",
+    "propane": "Propane",
+    "bois": "Bois",
+    "autre": "Autre / je ne sais pas",
+}
+
+TYPES_EQUIPEMENT = {
+    "electricite": ["Chauffe-eau électrique", "Thermopompe existante", "Chaudière électrique",
+                    "Plinthes / convecteurs", "Autre"],
+    "gaz_naturel": ["Chaudière au gaz (standard)", "Chaudière au gaz (condensation)",
+                    "Chauffe-eau au gaz", "Autre"],
+    "mazout": ["Chaudière au mazout", "Fournaise au mazout", "Autre"],
+    "propane": ["Chaudière au propane", "Chauffe-eau au propane", "Autre"],
+    "bois": ["Chaudière à biomasse", "Autre"],
+    "autre": ["Autre / à préciser"],
+}
+
+# Rendements typiques (%) préremplis à titre indicatif — à corriger si la valeur
+# réelle de l'équipement (plaque signalétique, rapport d'efficacité) est connue.
+RENDEMENT_TYPIQUE = {
+    "Chaudière au gaz (standard)": 80.0,
+    "Chaudière au gaz (condensation)": 95.0,
+    "Chauffe-eau au gaz": 80.0,
+    "Chaudière au mazout": 82.0,
+    "Fournaise au mazout": 80.0,
+    "Chauffe-eau électrique": 98.0,
+    "Thermopompe existante": 250.0,  # COP typique ~2.5 exprimé en "rendement" équivalent
+    "Chaudière électrique": 99.0,
+    "Plinthes / convecteurs": 100.0,
+    "Chaudière au propane": 82.0,
+    "Chauffe-eau au propane": 78.0,
+    "Chaudière à biomasse": 70.0,
+}
+
+UNITE_CONSO = {
+    "electricite": "kWh/an",
+    "gaz_naturel": "m³/an",
+    "mazout": "L/an",
+    "propane": "L/an",
+    "bois": "cordes/an",
+    "autre": "unité/an",
+}
+
 st.set_page_config(page_title="Sélecteur thermopompe air-eau ECS (Québec)", layout="wide")
 
 if "step" not in st.session_state:
@@ -59,15 +105,8 @@ if st.session_state.step == 1:
     energie = st.multiselect(
         "Source(s) d'énergie actuelle(s) à remplacer — sélectionne-en plusieurs si le site est bi-énergie "
         "(ex: électricité + gaz naturel)",
-        options=["electricite", "gaz_naturel", "mazout", "propane", "bois", "autre"],
-        format_func=lambda x: {
-            "electricite": "Électricité",
-            "gaz_naturel": "Gaz naturel",
-            "mazout": "Mazout",
-            "propane": "Propane",
-            "bois": "Bois",
-            "autre": "Autre / je ne sais pas",
-        }[x],
+        options=list(ENERGIE_LABELS.keys()),
+        format_func=lambda x: ENERGIE_LABELS[x],
         default=["electricite"],
     )
     if not energie:
@@ -83,6 +122,64 @@ if st.session_state.step == 1:
     col1, col2 = st.columns(2)
     revenu_sous_median = col1.checkbox("Revenu du ménage ≤ revenu médian provincial (pertinent si mazout)")
     combine_mesures = col2.checkbox("Je prévois aussi d'autres travaux d'efficacité énergétique en même temps")
+
+    st.divider()
+    st.write("**Équipement actuel, rendement et consommation — par source d'énergie sélectionnée**")
+    st.caption(
+        "Ces valeurs serviront de référence pour comparer la thermopompe air-eau au système existant "
+        "(économies d'énergie, de coûts et de GES à l'étape des résultats)."
+    )
+
+    if "equipements" not in st.session_state:
+        st.session_state.equipements = {}
+
+    for src in energie:
+        with st.expander(f"⚙️ Équipement actuel — {ENERGIE_LABELS[src]}", expanded=True):
+            options_eq = TYPES_EQUIPEMENT.get(src, ["Autre"])
+            existant = st.session_state.equipements.get(src, {})
+
+            c1, c2 = st.columns(2)
+            type_eq = c1.selectbox(
+                "Type d'équipement", options=options_eq,
+                index=options_eq.index(existant["type"]) if existant.get("type") in options_eq else 0,
+                key=f"eqtype_{src}",
+            )
+            modele = c2.text_input(
+                "Modèle / description (optionnel)", value=existant.get("modele", ""), key=f"eqmodele_{src}",
+            )
+
+            rendement_defaut = RENDEMENT_TYPIQUE.get(type_eq, 80.0)
+            c3, c4 = st.columns(2)
+            rendement = c3.number_input(
+                "Rendement de l'équipement existant (%)",
+                min_value=1.0, max_value=300.0,
+                value=existant.get("rendement_pct", rendement_defaut),
+                key=f"rdt_{src}",
+                help="Valeur typique préremplie selon le type sélectionné — ajuste selon la plaque "
+                     "signalétique ou un rapport d'efficacité réel si tu l'as. Pour une thermopompe "
+                     "existante, entre l'équivalent COP×100 (ex: COP 2.5 → 250%).",
+            )
+
+            unite = UNITE_CONSO.get(src, "unité/an")
+            valeur_defaut_conso = existant.get("consommation_annuelle", 0.0)
+            if not valeur_defaut_conso and "prix_energie" in st.session_state and src in st.session_state.prix_energie:
+                conso_facture = st.session_state.prix_energie[src].get("consommation") or 0.0
+                valeur_defaut_conso = conso_facture * 12  # approximation si la facture déposée est mensuelle
+
+            conso_annuelle = c4.number_input(
+                f"Consommation annuelle ({unite})",
+                min_value=0.0, value=float(valeur_defaut_conso), key=f"conso_an_{src}",
+                help="Préremplie ×12 si une facture a déjà été déposée à l'étape suivante — corrige avec "
+                     "ta consommation annuelle réelle si tu l'as (relevé annuel, sommaire de compte, etc.).",
+            )
+
+            st.session_state.equipements[src] = {
+                "type": type_eq,
+                "modele": modele,
+                "rendement_pct": rendement,
+                "consommation_annuelle": conso_annuelle,
+                "unite": unite,
+            }
 
     st.session_state.energie = energie
     st.session_state.type_batiment = type_batiment
