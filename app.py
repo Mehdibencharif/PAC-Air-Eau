@@ -36,21 +36,24 @@ if st.session_state.step == 1:
     st.subheader("1. Quel type de bâtiment et quelle(s) énergie(s) utilises-tu actuellement ?")
 
     type_batiment = st.radio(
-        "Type de bâtiment",
-        options=["residentiel_unifamilial", "residentiel_multilogement", "commercial_institutionnel"],
+        "Type de bâtiment / secteur",
+        options=["commercial_institutionnel", "industriel", "agricole"],
         format_func=lambda x: {
-            "residentiel_unifamilial": "Résidentiel — unifamilial",
-            "residentiel_multilogement": "Résidentiel — multilogement (duplex, triplex et +)",
-            "commercial_institutionnel": "Commercial / institutionnel",
+            "commercial_institutionnel": "Commercial & institutionnel",
+            "industriel": "Industriel",
+            "agricole": "Agricole",
         }[x],
         horizontal=True,
     )
-    if type_batiment == "commercial_institutionnel":
-        st.warning(
-            "Cet outil est calibré pour le résidentiel (dimensionnement ECS et règles de subvention). "
-            "Pour un projet commercial/institutionnel, les résultats de puissance resteront indicatifs "
-            "mais les subventions résidentielles ne s'appliqueront pas — programmes distincts à consulter."
-        )
+    st.caption(
+        "Le dimensionnement ECS (formule L/jour/personne) reste une base indicative pensée à l'origine "
+        "pour du résidentiel — à ajuster selon les usages réels du site (procédé, cheptel, occupants, "
+        "horaires de production, etc.). Les programmes de subvention doivent aussi être revus : "
+        "LogisVert/Rénoclimat/CAMT (déjà codés dans subsidies_qc.yaml) sont des programmes **résidentiels** "
+        "et ne s'appliqueront probablement à aucun de ces trois secteurs — il faudra les remplacer par les "
+        "bons programmes (ex: Transition énergétique Québec — volet affaires, Écoperformance Hydro-Québec/"
+        "Énergir pour commercial-industriel, programmes agricoles du MAPAQ, etc.)."
+    )
 
     energie = st.multiselect(
         "Source(s) d'énergie actuelle(s) à remplacer — sélectionne-en plusieurs si le site est bi-énergie "
