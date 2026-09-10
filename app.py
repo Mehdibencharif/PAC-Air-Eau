@@ -77,116 +77,253 @@ st.write(" → ".join(f"**{s}**" if i + 1 == st.session_state.step else s for i,
 st.divider()
 
 # ---------------------------------------------------------------------------
-# ÉTAPE 1 — Type de bâtiment + énergie(s) actuelle(s)
+# ÉTAPE 1 — IDENTIFICATION DU SITE ET SITUATION DE RÉFÉRENCE
 # ---------------------------------------------------------------------------
+
 if st.session_state.step == 1:
-    st.subheader("1. Quel type de bâtiment et quelle(s) énergie(s) utilises-tu actuellement ?")
+
+    st.subheader("1. Identification du bâtiment et situation énergétique actuelle")
+
+    # -----------------------------------------------------------------------
+    # IDENTIFICATION
+    # -----------------------------------------------------------------------
+
+    st.markdown("### 🏢 Identification du bâtiment")
+
+    nom_batiment = st.text_input(
+        "Nom du bâtiment / projet",
+        value=st.session_state.get("nom_batiment", "Bâtiment 1"),
+        placeholder="Ex. Usine Victoriaville - Salle mécanique 1",
+    )
+
+    st.divider()
+
+    # -----------------------------------------------------------------------
+    # MARCHÉ
+    # -----------------------------------------------------------------------
+
+    st.markdown("### Marché")
 
     type_batiment = st.radio(
-        "Type de bâtiment / secteur",
-        options=["commercial_institutionnel", "industriel", "agricole"],
+        "Sélectionner le secteur",
+        options=[
+            "commercial_institutionnel",
+            "industriel",
+            "agricole",
+        ],
         format_func=lambda x: {
             "commercial_institutionnel": "Commercial & institutionnel",
             "industriel": "Industriel",
             "agricole": "Agricole",
         }[x],
         horizontal=True,
+        label_visibility="collapsed",
     )
-    st.caption(
-        "Le dimensionnement ECS (formule L/jour/personne) reste une base indicative pensée à l'origine "
-        "pour du résidentiel — à ajuster selon les usages réels du site (procédé, cheptel, occupants, "
-        "horaires de production, etc.). Les programmes de subvention doivent aussi être revus : "
-        "LogisVert/Rénoclimat/CAMT (déjà codés dans subsidies_qc.yaml) sont des programmes **résidentiels** "
-        "et ne s'appliqueront probablement à aucun de ces trois secteurs — il faudra les remplacer par les "
-        "bons programmes (ex: Transition énergétique Québec — volet affaires, Écoperformance Hydro-Québec/"
-        "Énergir pour commercial-industriel, programmes agricoles du MAPAQ, etc.)."
-    )
-
-    energie = st.multiselect(
-        "Source(s) d'énergie actuelle(s) à remplacer — sélectionne-en plusieurs si le site est bi-énergie "
-        "(ex: électricité + gaz naturel)",
-        options=list(ENERGIE_LABELS.keys()),
-        format_func=lambda x: ENERGIE_LABELS[x],
-        default=["electricite"],
-    )
-    if not energie:
-        st.error("Sélectionne au moins une source d'énergie.")
-
-    if set(energie) >= {"electricite", "gaz_naturel"}:
-        st.info(
-            "Site bi-énergie détecté (électricité + gaz naturel). Vérifie aussi le tarif biénergie "
-            "Hydro-Québec/Énergir — distinct des subventions à l'achat de la thermopompe, mais peut "
-            "réduire ta facture d'exploitation si tu conserves une bascule vers le gaz par grand froid."
-        )
-
-    col1, col2 = st.columns(2)
-    revenu_sous_median = col1.checkbox("Revenu du ménage ≤ revenu médian provincial (pertinent si mazout)")
-    combine_mesures = col2.checkbox("Je prévois aussi d'autres travaux d'efficacité énergétique en même temps")
 
     st.divider()
-    st.write("**Équipement actuel, rendement et consommation — par source d'énergie sélectionnée**")
-    st.caption(
-        "Ces valeurs serviront de référence pour comparer la thermopompe air-eau au système existant "
-        "(économies d'énergie, de coûts et de GES à l'étape des résultats)."
+
+    # -----------------------------------------------------------------------
+    # NATURE DU PROJET
+    # -----------------------------------------------------------------------
+
+    st.markdown("### Nature du projet")
+
+    nature_projet = st.radio(
+        "Nature",
+        options=[
+            "batiment_existant",
+            "nouveau_batiment",
+            "agrandissement",
+            "renovation_majeure",
+        ],
+        format_func=lambda x: {
+            "batiment_existant": "Bâtiment existant",
+            "nouveau_batiment": "Nouveau bâtiment",
+            "agrandissement": "Agrandissement",
+            "renovation_majeure": "Rénovation majeure",
+        }[x],
+        horizontal=True,
+        label_visibility="collapsed",
     )
+
+    st.divider()
+
+    # -----------------------------------------------------------------------
+    # SOURCE D'ÉNERGIE ACTUELLE
+    # -----------------------------------------------------------------------
+
+    st.markdown("### 🔥⚡ Source d'énergie actuelle")
+
+    energie = st.multiselect(
+        "Source(s) d'énergie utilisée(s) actuellement",
+        options=[
+            "electricite",
+            "gaz_naturel",
+            "propane",
+            "mazout",
+            "autre",
+        ],
+        format_func=lambda x: {
+            "electricite": "Électricité",
+            "gaz_naturel": "Gaz naturel",
+            "propane": "Propane",
+            "mazout": "Mazout",
+            "autre": "Autre",
+        }[x],
+        default=st.session_state.get("energie", ["electricite"]),
+    )
+
+    if not energie:
+        st.warning("Sélectionne au moins une source d'énergie.")
+
+    if len(energie) > 1:
+        st.info("Site multisource détecté. Les consommations seront analysées séparément.")
+
+    st.divider()
+
+    # -----------------------------------------------------------------------
+    # ÉQUIPEMENT EXISTANT
+    # -----------------------------------------------------------------------
+
+    st.markdown("### ⚙️ Équipement existant")
 
     if "equipements" not in st.session_state:
         st.session_state.equipements = {}
 
     for src in energie:
-        with st.expander(f"⚙️ Équipement actuel — {ENERGIE_LABELS[src]}", expanded=True):
-            options_eq = TYPES_EQUIPEMENT.get(src, ["Autre"])
+
+        label_source = {
+            "electricite": "Électricité",
+            "gaz_naturel": "Gaz naturel",
+            "propane": "Propane",
+            "mazout": "Mazout",
+            "autre": "Autre",
+        }[src]
+
+        with st.expander(
+            f"Équipement associé — {label_source}",
+            expanded=True,
+        ):
+
             existant = st.session_state.equipements.get(src, {})
 
+            if src == "electricite":
+                options_eq = [
+                    "Chauffe-eau électrique",
+                    "Chaudière électrique",
+                    "Éléments électriques",
+                    "Thermopompe existante",
+                    "Autre",
+                ]
+
+            elif src == "gaz_naturel":
+                options_eq = [
+                    "Chauffe-eau gaz naturel",
+                    "Chaudière gaz naturel",
+                    "Chaudière vapeur",
+                    "Brûleur direct",
+                    "Autre",
+                ]
+
+            elif src == "propane":
+                options_eq = [
+                    "Chauffe-eau propane",
+                    "Chaudière propane",
+                    "Brûleur propane",
+                    "Autre",
+                ]
+
+            else:
+                options_eq = ["Chaudière", "Chauffe-eau", "Autre"]
+
             c1, c2 = st.columns(2)
+
             type_eq = c1.selectbox(
-                "Type d'équipement", options=options_eq,
-                index=options_eq.index(existant["type"]) if existant.get("type") in options_eq else 0,
+                "Type d'équipement",
+                options=options_eq,
+                index=(
+                    options_eq.index(existant["type"])
+                    if existant.get("type") in options_eq
+                    else 0
+                ),
                 key=f"eqtype_{src}",
             )
+
             modele = c2.text_input(
-                "Modèle / description (optionnel)", value=existant.get("modele", ""), key=f"eqmodele_{src}",
+                "Modèle / description",
+                value=existant.get("modele", ""),
+                key=f"eqmodele_{src}",
             )
 
-            rendement_defaut = RENDEMENT_TYPIQUE.get(type_eq, 80.0)
-            c3, c4 = st.columns(2)
+            c3, c4, c5 = st.columns(3)
+
             rendement = c3.number_input(
-                "Rendement de l'équipement existant (%)",
-                min_value=1.0, max_value=300.0,
-                value=existant.get("rendement_pct", rendement_defaut),
+                "Rendement actuel (%)",
+                min_value=1.0,
+                max_value=300.0,
+                value=float(existant.get("rendement_pct", 80.0)),
                 key=f"rdt_{src}",
-                help="Valeur typique préremplie selon le type sélectionné — ajuste selon la plaque "
-                     "signalétique ou un rapport d'efficacité réel si tu l'as. Pour une thermopompe "
-                     "existante, entre l'équivalent COP×100 (ex: COP 2.5 → 250%).",
             )
 
-            unite = UNITE_CONSO.get(src, "unité/an")
-            valeur_defaut_conso = existant.get("consommation_annuelle", 0.0)
-            if not valeur_defaut_conso and "prix_energie" in st.session_state and src in st.session_state.prix_energie:
-                conso_facture = st.session_state.prix_energie[src].get("consommation") or 0.0
-                valeur_defaut_conso = conso_facture * 12  # approximation si la facture déposée est mensuelle
+            unite = {
+                "electricite": "kWh/an",
+                "gaz_naturel": "m³/an",
+                "propane": "L/an",
+                "mazout": "L/an",
+                "autre": "unité/an",
+            }[src]
 
-            conso_annuelle = c4.number_input(
+            consommation = c4.number_input(
                 f"Consommation annuelle ({unite})",
-                min_value=0.0, value=float(valeur_defaut_conso), key=f"conso_an_{src}",
-                help="Préremplie ×12 si une facture a déjà été déposée à l'étape suivante — corrige avec "
-                     "ta consommation annuelle réelle si tu l'as (relevé annuel, sommaire de compte, etc.).",
+                min_value=0.0,
+                value=float(
+                    existant.get("consommation_annuelle", 0.0)
+                ),
+                key=f"conso_{src}",
+            )
+
+            unite_prix = {
+                "electricite": "$/kWh",
+                "gaz_naturel": "$/m³",
+                "propane": "$/L",
+                "mazout": "$/L",
+                "autre": "$/unité",
+            }[src]
+
+            prix = c5.number_input(
+                f"Coût moyen ({unite_prix})",
+                min_value=0.0,
+                value=float(existant.get("prix_unitaire", 0.0)),
+                format="%.4f",
+                key=f"prix_{src}",
             )
 
             st.session_state.equipements[src] = {
                 "type": type_eq,
                 "modele": modele,
                 "rendement_pct": rendement,
-                "consommation_annuelle": conso_annuelle,
+                "consommation_annuelle": consommation,
                 "unite": unite,
+                "prix_unitaire": prix,
+                "unite_prix": unite_prix,
             }
 
-    st.session_state.energie = energie
-    st.session_state.type_batiment = type_batiment
-    st.session_state.revenu_sous_median = revenu_sous_median
-    st.session_state.combine_mesures = combine_mesures
+    # -----------------------------------------------------------------------
+    # ENREGISTREMENT SESSION
+    # -----------------------------------------------------------------------
 
-    if st.button("Suivant →", type="primary", disabled=not energie):
+    st.session_state.nom_batiment = nom_batiment
+    st.session_state.type_batiment = type_batiment
+    st.session_state.nature_projet = nature_projet
+    st.session_state.energie = energie
+
+    st.divider()
+
+    if st.button(
+        "Suivant →",
+        type="primary",
+        disabled=not energie,
+    ):
         st.session_state.step = 2
         st.rerun()
 
