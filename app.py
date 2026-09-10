@@ -513,104 +513,409 @@ for src in energie:
         st.rerun()
 
 # ---------------------------------------------------------------------------
-# ÉTAPE 2 — Prix de l'énergie (à partir de tes factures)
+# ÉTAPE 2 — Prix de l'énergie (à partir des factures)
 # ---------------------------------------------------------------------------
-elif st.session_state.step == 2:
-    st.subheader("2. Dépose tes factures pour calculer le prix réel de l'énergie")
+
+if st.session_state.step == 2:
+
+    st.subheader("2. Prix de l'énergie")
+
     st.caption(
-        "PDF téléchargé du site du fournisseur ou photo/scan de la facture papier — les deux sont "
-        "acceptés. L'outil tente de détecter Hydro-Québec (kWh) ou Énergir (m³), d'en extraire la "
-        "consommation et le montant facturé, puis calcule un $/kWh ou $/m³. Les photos passent par "
-        "une reconnaissance de texte (OCR) qui peut se tromper — vérifie toujours les valeurs avant "
-        "d'enregistrer. Cette étape est optionnelle : tu peux aussi passer et saisir un prix manuellement."
+        "Dépose une ou plusieurs factures afin d'estimer automatiquement le coût réel "
+        "de l'énergie. Tu pourras toujours vérifier et modifier manuellement les valeurs."
     )
 
+    # -----------------------------------------------------------------------
+    # INITIALISATION
+    # -----------------------------------------------------------------------
+
     if "prix_energie" not in st.session_state:
-        st.session_state.prix_energie = {}  # ex: {"electricite": {...}, "gaz_naturel": {...}}
+        st.session_state.prix_energie = {}
+
+    # -----------------------------------------------------------------------
+    # IMPORT DES FACTURES
+    # -----------------------------------------------------------------------
 
     factures = st.file_uploader(
-        "Factures (PDF ou photo JPG/PNG)",
+        "Factures d'énergie (PDF, JPG ou PNG)",
         type=["pdf", "jpg", "jpeg", "png"],
         accept_multiple_files=True,
         key="upload_factures",
     )
 
+    # -----------------------------------------------------------------------
+    # ANALYSE DES FACTURES
+    # -----------------------------------------------------------------------
+
     if factures:
+
         for f in factures:
+
             suffix = os.path.splitext(f.name)[1].lower()
-            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                tmp.write(f.read())
+
+            with tempfile.NamedTemporaryFile(
+                delete=False,
+                suffix=suffix
+            ) as tmp:
+
+                tmp.write(f.getvalue())
                 tmp_path = tmp.name
 
             try:
-                prix = extraire_prix_facture(tmp_path, nom_fichier=f.name)
+
+                prix = extraire_prix_facture(
+                    tmp_path,
+                    nom_fichier=f.name
+                )
+
             except Exception as e:
-                st.error(f"Erreur d'extraction pour {f.name} : {e}")
+
+                st.error(
+                    f"Erreur lors de l'analyse de {f.name} : {e}"
+                )
+
+                # Suppression du fichier temporaire
+                try:
+                    os.remove(tmp_path)
+                except Exception:
+                    pass
+
                 continue
 
-            with st.expander(f"🧾 {f.name} — méthode de lecture : {prix.methode}", expanded=True):
-                options_src = ["electricite", "gaz_naturel", "propane", "mazout", "autre"]
+            # ---------------------------------------------------------------
+            # AFFICHAGE DE LA FACTURE
+            # ---------------------------------------------------------------
+
+            with st.expander(
+                f"🧾 {f.name} — méthode : {prix.methode}",
+                expanded=True
+            ):
+
+                # Utilise prioritairement les énergies sélectionnées
+                # à l'étape 1
+                options_src = st.session_state.get(
+                    "energie",
+                    [
+                        "electricite",
+                        "gaz_naturel",
+                        "propane",
+                        "mazout",
+                        "autre",
+                    ]
+                )
+
+                # Sécurité si la liste est vide
+                if not options_src:
+                    options_src = [
+                        "electricite",
+                        "gaz_naturel",
+                        "propane",
+                        "mazout",
+                        "autre",
+                    ]
+
+                labels_energie = {
+                    "electricite": "Électricité",
+                    "gaz_naturel": "Gaz naturel",
+                    "propane": "Propane",
+                    "mazout": "Mazout",
+                    "autre": "Autre",
+                }
+
+                # Détermination de la source détectée
+                if prix.type_source in options_src:
+                    index_source = options_src.index(
+                        prix.type_source
+                    )
+                else:
+                    index_source = 0
+
                 col1, col2, col3 = st.columns(3)
+
                 source_detectee = col1.selectbox(
-                    "Source d'énergie de cette facture",
+                    "Source d'énergie",
                     options=options_src,
-                    index=options_src.index(prix.type_source) if prix.type_source in options_src else 4,
+                    index=index_source,
+                    format_func=lambda x: labels_energie.get(
+                        x,
+                        x
+                    ),
                     key=f"src_{f.name}",
                 )
-                unite = "kWh" if source_detectee == "electricite" else "m³" if source_detectee == "gaz_naturel" else "unité"
+
+                # -----------------------------------------------------------
+                # UNITÉ
+                # -----------------------------------------------------------
+
+                if source_detectee == "electricite":
+                    unite = "kWh"
+
+                elif source_detectee == "gaz_naturel":
+                    unite = "m³"
+
+                elif source_detectee in [
+                    "propane",
+                    "mazout"
+                ]:
+                    unite = "L"
+
+                else:
+                    unite = "unité"
+
+                # -----------------------------------------------------------
+                # CONSOMMATION
+                # -----------------------------------------------------------
+
                 consommation = col2.number_input(
-                    f"Consommation ({unite})", value=prix.consommation or 0.0, key=f"conso_{f.name}",
+                    f"Consommation ({unite})",
+                    min_value=0.0,
+                    value=float(
+                        prix.consommation or 0.0
+                    ),
+                    key=f"conso_{f.name}",
                 )
-                montant = col3.number_input("Montant facturé ($)", value=prix.montant_total or 0.0, key=f"mnt_{f.name}")
+
+                # -----------------------------------------------------------
+                # MONTANT
+                # -----------------------------------------------------------
+
+                montant = col3.number_input(
+                    "Montant facturé ($)",
+                    min_value=0.0,
+                    value=float(
+                        prix.montant_total or 0.0
+                    ),
+                    key=f"mnt_{f.name}",
+                )
+
+                # -----------------------------------------------------------
+                # CALCUL DU COÛT MOYEN
+                # -----------------------------------------------------------
 
                 if consommation > 0:
-                    prix_unitaire = montant / consommation
-                    st.success(f"💲 Prix calculé : **{prix_unitaire:.4f} $/{unite}**")
+
+                    prix_unitaire = (
+                        montant / consommation
+                    )
+
+                    st.success(
+                        f"Coût moyen calculé : "
+                        f"**{prix_unitaire:.4f} $/{unite}**"
+                    )
+
                 else:
-                    st.warning("Renseigne une consommation > 0 pour calculer le prix unitaire.")
+
                     prix_unitaire = None
 
+                    st.warning(
+                        "La consommation doit être supérieure "
+                        "à zéro pour calculer le coût moyen."
+                    )
+
+                # -----------------------------------------------------------
+                # INFORMATIONS MANQUANTES
+                # -----------------------------------------------------------
+
                 manquants = []
+
                 if prix.consommation is None:
                     manquants.append("consommation")
+
                 if prix.montant_total is None:
-                    manquants.append("montant total")
+                    manquants.append("montant facturé")
+
                 if manquants:
-                    st.warning(f"Non détecté automatiquement, à vérifier/compléter : {', '.join(manquants)}")
-                if prix.methode in ("ocr_image", "ocr_pdf_scanne"):
-                    st.caption("⚠️ Valeurs lues par OCR sur image — plus sujettes à erreur qu'un PDF texte, vérifie-les bien.")
+
+                    st.warning(
+                        "Information(s) non détectée(s) "
+                        "automatiquement : "
+                        + ", ".join(manquants)
+                    )
+
+                # -----------------------------------------------------------
+                # AVERTISSEMENT OCR
+                # -----------------------------------------------------------
+
+                if prix.methode in (
+                    "ocr_image",
+                    "ocr_pdf_scanne"
+                ):
+
+                    st.caption(
+                        "⚠️ Certaines valeurs proviennent "
+                        "de la reconnaissance OCR. "
+                        "Vérifie-les avant de les enregistrer."
+                    )
+
+                # -----------------------------------------------------------
+                # LIGNES SOURCES
+                # -----------------------------------------------------------
 
                 if prix.lignes_source:
-                    with st.popover("Voir les lignes sources détectées"):
-                        for champ, ligne in prix.lignes_source.items():
-                            st.write(f"**{champ}** : `{ligne}`")
 
-                if st.button("Enregistrer ce prix", key=f"save_{f.name}"):
-                    st.session_state.prix_energie[source_detectee] = {
-                        "prix_unitaire": prix_unitaire,
-                        "unite": unite,
-                        "montant_total": montant,
-                        "consommation": consommation,
-                        "fichier_source": f.name,
+                    with st.popover(
+                        "Voir les informations détectées"
+                    ):
+
+                        for champ, ligne in (
+                            prix.lignes_source.items()
+                        ):
+
+                            st.write(
+                                f"**{champ}** : `{ligne}`"
+                            )
+
+                # -----------------------------------------------------------
+                # ENREGISTREMENT
+                # -----------------------------------------------------------
+
+                if st.button(
+                    "Enregistrer ce prix",
+                    key=f"save_{f.name}"
+                ):
+
+                    st.session_state.prix_energie[
+                        source_detectee
+                    ] = {
+
+                        "prix_unitaire":
+                            prix_unitaire,
+
+                        "unite":
+                            unite,
+
+                        "montant_total":
+                            montant,
+
+                        "consommation":
+                            consommation,
+
+                        "fichier_source":
+                            f.name,
                     }
-                    st.success(f"Prix enregistré pour {source_detectee} : {prix_unitaire:.4f} $/{unite}" if prix_unitaire else "Prix enregistré (consommation manquante — à corriger).")
+
+                    # Synchronise aussi avec la tarification
+                    # créée à l'étape 1
+                    if (
+                        prix_unitaire is not None
+                        and "tarifs"
+                        in st.session_state
+                    ):
+
+                        if (
+                            source_detectee
+                            not in st.session_state.tarifs
+                        ):
+
+                            st.session_state.tarifs[
+                                source_detectee
+                            ] = {}
+
+                        st.session_state.tarifs[
+                            source_detectee
+                        ]["cout_moyen"] = prix_unitaire
+
+                    if prix_unitaire is not None:
+
+                        st.success(
+                            f"✅ Prix enregistré : "
+                            f"{prix_unitaire:.4f} "
+                            f"$/{unite}"
+                        )
+
+                    else:
+
+                        st.warning(
+                            "Prix enregistré, mais la "
+                            "consommation doit être corrigée."
+                        )
+
+            # ---------------------------------------------------------------
+            # SUPPRESSION DU FICHIER TEMPORAIRE
+            # ---------------------------------------------------------------
+
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass
+
+    # -----------------------------------------------------------------------
+    # RÉSUMÉ DES PRIX ENREGISTRÉS
+    # -----------------------------------------------------------------------
 
     if st.session_state.prix_energie:
+
         st.divider()
-        st.write("**Prix enregistrés pour ce site :**")
-        for src, d in st.session_state.prix_energie.items():
-            if d["prix_unitaire"] is not None:
-                st.write(f"- **{src}** : {d['prix_unitaire']:.4f} $/{d['unite']}  _(facture : {d['fichier_source']})_")
+
+        st.markdown(
+            "### 💲 Prix d'énergie enregistrés"
+        )
+
+        for src, d in (
+            st.session_state.prix_energie.items()
+        ):
+
+            if d.get("prix_unitaire") is not None:
+
+                label = {
+                    "electricite":
+                        "⚡ Électricité",
+
+                    "gaz_naturel":
+                        "🔥 Gaz naturel",
+
+                    "propane":
+                        "🔥 Propane",
+
+                    "mazout":
+                        "🔥 Mazout",
+
+                    "autre":
+                        "Autre",
+                }.get(src, src)
+
+                st.write(
+                    f"**{label}** : "
+                    f"{d['prix_unitaire']:.4f} "
+                    f"$/{d['unite']}"
+                )
+
+                st.caption(
+                    f"Source : {d['fichier_source']}"
+                )
+
     else:
-        st.info("Aucun prix enregistré pour l'instant.")
+
+        st.info(
+            "Aucun prix provenant d'une facture "
+            "n'a encore été enregistré."
+        )
+
+    # -----------------------------------------------------------------------
+    # NAVIGATION
+    # -----------------------------------------------------------------------
+
+    st.divider()
 
     c1, c2 = st.columns(2)
-    if c1.button("← Précédent", key="prev_2"):
+
+    if c1.button(
+        "← Précédent",
+        key="prev_2"
+    ):
+
         st.session_state.step = 1
         st.rerun()
-    if c2.button("Suivant →", type="primary", key="next_2"):
+
+    if c2.button(
+        "Suivant →",
+        type="primary",
+        key="next_2"
+    ):
+
         st.session_state.step = 3
         st.rerun()
+
 
 # ---------------------------------------------------------------------------
 # ÉTAPE 3 — Besoin en ECS
