@@ -458,59 +458,367 @@ elif st.session_state.step == 2:
         st.rerun()
 
 # ---------------------------------------------------------------------------
-# ÉTAPE 3 — Besoin en ECS
+# ÉTAPE 3 — Besoin thermique / consommation d'eau chaude
 # ---------------------------------------------------------------------------
-elif st.session_state.step == 3:
-    st.subheader("3. Quel est ton besoin en eau chaude sanitaire ?")
-    methode = st.radio(
-        "Méthode d'estimation",
-        options=["personnes", "profil", "manuel"],
-        format_func=lambda x: {
-            "personnes": "Nombre de personnes dans le logement",
-            "profil": "Profil de consommation (petit / moyen / grand)",
-            "manuel": "Je connais mon volume quotidien en litres",
-        }[x],
-        horizontal=True,
+
+if st.session_state.step == 3:
+
+    st.subheader("3. Besoin thermique et consommation d'eau chaude")
+
+    st.caption(
+        "Définis les principaux postes de consommation d'eau chaude du site. "
+        "L'outil calcule ensuite le volume annuel, le besoin thermique annuel "
+        "et la puissance moyenne requise."
     )
 
-    nb_personnes = profil = volume_manuel = None
-    if methode == "personnes":
-        nb_personnes = st.slider("Nombre de personnes", 1, 10, 4)
-    elif methode == "profil":
-        profil = st.selectbox("Profil", options=list(PROFILS_L_PAR_JOUR.keys()),
-                               format_func=lambda x: f"{x.capitalize()} (~{PROFILS_L_PAR_JOUR[x]} L/jour)")
+    # -----------------------------------------------------------------------
+    # PARAMÈTRES GÉNÉRAUX
+    # -----------------------------------------------------------------------
+
+    st.markdown("### 🌡️ Paramètres généraux")
+
+    c1, c2, c3 = st.columns(3)
+
+    temp_froide = c1.number_input(
+        "Température de l'eau froide entrante (°C)",
+        value=10.0,
+        step=1.0,
+    )
+
+    temp_chaude_defaut = c2.number_input(
+        "Température d'eau chaude par défaut (°C)",
+        value=60.0,
+        step=1.0,
+    )
+
+    heures_fonctionnement = c3.number_input(
+        "Heures d'opération par jour",
+        min_value=1.0,
+        max_value=24.0,
+        value=12.0,
+        step=1.0,
+    )
+
+    st.divider()
+
+    # -----------------------------------------------------------------------
+    # POSTES DE CONSOMMATION
+    # -----------------------------------------------------------------------
+
+    st.markdown("### 🚿 Postes de consommation")
+
+    if "postes_ecs" not in st.session_state:
+
+        st.session_state.postes_ecs = [
+
+            {
+                "poste": "Lavage et assainissement des équipements",
+                "volume_gal_jour": 3200.0,
+                "jours_an": 250,
+                "temperature_C": 60.0,
+                "inclure": True,
+            },
+
+            {
+                "poste": "Nettoyage en place (CIP)",
+                "volume_gal_jour": 1320.0,
+                "jours_an": 250,
+                "temperature_C": 60.0,
+                "inclure": True,
+            },
+
+            {
+                "poste": "Lavage des planchers et surfaces",
+                "volume_gal_jour": 800.0,
+                "jours_an": 250,
+                "temperature_C": 60.0,
+                "inclure": True,
+            },
+
+            {
+                "poste": "Sanitaires et vestiaires du personnel",
+                "volume_gal_jour": 530.0,
+                "jours_an": 300,
+                "temperature_C": 60.0,
+                "inclure": True,
+            },
+        ]
+
+    # -----------------------------------------------------------------------
+    # TABLEAU D'ÉDITION DES POSTES
+    # -----------------------------------------------------------------------
+
+    postes_modifies = []
+
+    for i, poste in enumerate(st.session_state.postes_ecs):
+
+        with st.expander(
+            f"{'✅' if poste.get('inclure', True) else '⬜'} {poste['poste']}",
+            expanded=True
+        ):
+
+            c0, c1, c2, c3 = st.columns([0.5, 2.5, 1.5, 1.5])
+
+            inclure = c0.checkbox(
+                "Inclure",
+                value=poste.get("inclure", True),
+                key=f"inclure_poste_{i}",
+                label_visibility="collapsed",
+            )
+
+            nom_poste = c1.text_input(
+                "Poste de consommation",
+                value=poste["poste"],
+                key=f"poste_nom_{i}",
+            )
+
+            volume_gal_jour = c2.number_input(
+                "Volume (gal US/jour)",
+                min_value=0.0,
+                value=float(poste["volume_gal_jour"]),
+                step=10.0,
+                key=f"poste_volume_{i}",
+            )
+
+            jours_an = c3.number_input(
+                "Jours d'opération / an",
+                min_value=0,
+                max_value=365,
+                value=int(poste["jours_an"]),
+                step=1,
+                key=f"poste_jours_{i}",
+            )
+
+            temperature_C = st.number_input(
+                "Température requise pour ce poste (°C)",
+                min_value=float(temp_froide),
+                max_value=100.0,
+                value=float(poste.get("temperature_C", temp_chaude_defaut)),
+                step=1.0,
+                key=f"poste_temp_{i}",
+            )
+
+            postes_modifies.append(
+                {
+                    "poste": nom_poste,
+                    "volume_gal_jour": volume_gal_jour,
+                    "jours_an": jours_an,
+                    "temperature_C": temperature_C,
+                    "inclure": inclure,
+                }
+            )
+
+    st.session_state.postes_ecs = postes_modifies
+
+    # -----------------------------------------------------------------------
+    # AJOUT D'UN POSTE PERSONNALISÉ
+    # -----------------------------------------------------------------------
+
+    if st.button("➕ Ajouter un poste de consommation"):
+
+        st.session_state.postes_ecs.append(
+            {
+                "poste": "Nouveau poste",
+                "volume_gal_jour": 0.0,
+                "jours_an": 250,
+                "temperature_C": temp_chaude_defaut,
+                "inclure": True,
+            }
+        )
+
+        st.rerun()
+
+    st.divider()
+
+    # -----------------------------------------------------------------------
+    # CALCUL DES BESOINS
+    # -----------------------------------------------------------------------
+
+    GAL_US_TO_L = 3.78541
+    CP_EAU_KWH_KG_C = 0.001163
+
+    resultats = []
+
+    total_volume_jour = 0.0
+    total_volume_annuel = 0.0
+    total_energie_kwh_an = 0.0
+
+    for poste in st.session_state.postes_ecs:
+
+        if not poste["inclure"]:
+            continue
+
+        volume_jour_gal = poste["volume_gal_jour"]
+        jours_an = poste["jours_an"]
+        temp_chaude = poste["temperature_C"]
+
+        volume_annuel_gal = volume_jour_gal * jours_an
+
+        volume_annuel_L = (
+            volume_annuel_gal * GAL_US_TO_L
+        )
+
+        deltaT = max(
+            temp_chaude - temp_froide,
+            0
+        )
+
+        # 1 litre d'eau ≈ 1 kg
+        energie_kwh_an = (
+            volume_annuel_L
+            * CP_EAU_KWH_KG_C
+            * deltaT
+        )
+
+        energie_mwh_an = energie_kwh_an / 1000
+
+        energie_mmbtu_an = (
+            energie_kwh_an * 0.003412
+        )
+
+        resultats.append(
+            {
+                "Poste de consommation": poste["poste"],
+                "Volume (gal US/jour)": volume_jour_gal,
+                "Jours/an": jours_an,
+                "Volume annuel (gal US)": volume_annuel_gal,
+                "Température (°C)": temp_chaude,
+                "ΔT (°C)": deltaT,
+                "Besoin thermique (MMBtu/an)": energie_mmbtu_an,
+                "Besoin thermique (MWh/an)": energie_mwh_an,
+            }
+        )
+
+        total_volume_jour += volume_jour_gal
+        total_volume_annuel += volume_annuel_gal
+        total_energie_kwh_an += energie_kwh_an
+
+    # -----------------------------------------------------------------------
+    # AFFICHAGE DU TABLEAU
+    # -----------------------------------------------------------------------
+
+    if resultats:
+
+        df_besoins = pd.DataFrame(resultats)
+
+        st.markdown("### 📊 Résumé des besoins")
+
+        st.dataframe(
+            df_besoins.style.format(
+                {
+                    "Volume (gal US/jour)": "{:,.0f}",
+                    "Jours/an": "{:,.0f}",
+                    "Volume annuel (gal US)": "{:,.0f}",
+                    "Température (°C)": "{:.1f}",
+                    "ΔT (°C)": "{:.1f}",
+                    "Besoin thermique (MMBtu/an)": "{:,.1f}",
+                    "Besoin thermique (MWh/an)": "{:,.1f}",
+                }
+            ),
+            use_container_width=True,
+        )
+
+        total_mwh_an = (
+            total_energie_kwh_an / 1000
+        )
+
+        total_mmbtu_an = (
+            total_energie_kwh_an * 0.003412
+        )
+
+        # Puissance moyenne pendant les heures d'opération
+        total_heures_an = (
+            max(
+                [p["jours_an"]
+                 for p in st.session_state.postes_ecs
+                 if p["inclure"]],
+                default=0
+            )
+            * heures_fonctionnement
+        )
+
+        if total_heures_an > 0:
+            puissance_moyenne_kw = (
+                total_energie_kwh_an
+                / total_heures_an
+            )
+        else:
+            puissance_moyenne_kw = 0.0
+
+        # -------------------------------------------------------------------
+        # INDICATEURS
+        # -------------------------------------------------------------------
+
+        c1, c2, c3, c4 = st.columns(4)
+
+        c1.metric(
+            "Volume total",
+            f"{total_volume_jour:,.0f} gal US/j"
+        )
+
+        c2.metric(
+            "Volume annuel",
+            f"{total_volume_annuel:,.0f} gal US/an"
+        )
+
+        c3.metric(
+            "Besoin thermique",
+            f"{total_mwh_an:,.1f} MWh/an"
+        )
+
+        c4.metric(
+            "Puissance moyenne",
+            f"{puissance_moyenne_kw:,.1f} kW"
+        )
+
+        st.caption(
+            f"Équivalent énergétique : "
+            f"{total_mmbtu_an:,.1f} MMBtu/an"
+        )
+
+        # -------------------------------------------------------------------
+        # SESSION STATE
+        # -------------------------------------------------------------------
+
+        st.session_state.besoin_industriel = {
+            "volume_gal_jour": total_volume_jour,
+            "volume_annuel_gal": total_volume_annuel,
+            "energie_kwh_an": total_energie_kwh_an,
+            "energie_mwh_an": total_mwh_an,
+            "energie_mmbtu_an": total_mmbtu_an,
+            "puissance_moyenne_kw": puissance_moyenne_kw,
+            "temp_froide_C": temp_froide,
+            "heures_fonctionnement_jour": heures_fonctionnement,
+            "postes": resultats,
+        }
+
     else:
-        volume_manuel = st.number_input("Volume d'eau chaude (L/jour)", min_value=20, value=250)
 
-    col1, col2, col3 = st.columns(3)
-    temp_froide = col1.number_input("Température eau froide entrante (°C)", value=7.0)
-    temp_consigne = col2.number_input("Température de consigne souhaitée (°C)", value=55.0)
-    heures_fonctionnement = col3.number_input("Heures de fonctionnement visées / jour", value=12.0)
-    temp_design_hiver = st.number_input(
-        "Température extérieure de design hiver (°C) — pire cas de ta région",
-        value=-20.0, help="Ex: -20°C pour Sherbrooke en pire cas. Ajuste selon ta localisation exacte.",
-    )
+        st.warning(
+            "Aucun poste de consommation n'est sélectionné."
+        )
 
-    besoin = estimer_besoin(
-        nb_personnes=nb_personnes, profil=profil, volume_manuel_l=volume_manuel,
-        temp_froide_C=temp_froide, temp_consigne_C=temp_consigne,
-        heures_fonctionnement_jour=heures_fonctionnement,
-    )
+    # -----------------------------------------------------------------------
+    # NAVIGATION
+    # -----------------------------------------------------------------------
 
-    st.info(
-        f"**Volume estimé :** {besoin.volume_l_par_jour:.0f} L/jour · "
-        f"**Énergie requise :** {besoin.energie_kwh_jour:.1f} kWh/jour · "
-        f"**Puissance thermique recommandée :** {besoin.puissance_recommandee_kw:.2f} kW"
-    )
-
-    st.session_state.besoin = besoin
-    st.session_state.temp_design_hiver = temp_design_hiver
+    st.divider()
 
     c1, c2 = st.columns(2)
-    if c1.button("← Précédent", key="prev_3"):
+
+    if c1.button(
+        "← Précédent",
+        key="prev_3"
+    ):
         st.session_state.step = 2
         st.rerun()
-    if c2.button("Suivant →", type="primary", key="next_3"):
+
+    if c2.button(
+        "Suivant →",
+        type="primary",
+        key="next_3",
+        disabled=not resultats,
+    ):
         st.session_state.step = 4
         st.rerun()
 
