@@ -1260,81 +1260,388 @@ if st.session_state.step == 4:
         st.rerun()
 
 # ---------------------------------------------------------------------------
-# ÉTAPE 5 — Résultats : recommandation + subventions
+# ÉTAPE 5 — Analyse finale : énergie + PRI + estimation OSE
 # ---------------------------------------------------------------------------
-elif st.session_state.step == 5:
-    st.subheader("5. Recommandation et estimation des subventions")
 
-    besoin = st.session_state.besoin
-    temp_design = st.session_state.temp_design_hiver
+if st.session_state.step == 5:
 
-    tab1, tab2 = st.tabs(["🏆 Meilleurs choix", "💰 Subventions estimées"])
+    st.subheader("5. Analyse énergétique, économique et estimation OSE")
 
-    with tab1:
-        exclure_placeholders = st.checkbox("Exclure les modèles 'Exemple' (placeholders)", value=True)
-        df = st.session_state.catalogue.copy()
-        if exclure_placeholders:
-            df = df[~df["modele"].str.contains("Exemple", na=False)]
+    pac = st.session_state.get("pac_selectionnee", {})
+    besoin = st.session_state.get("besoin_industriel", {})
+    tarifs = st.session_state.get("tarifs", {})
+    equipements = st.session_state.get("equipements", {})
 
-        if df.empty:
-            st.warning("Aucun modèle réel dans le catalogue. Ajoute des fiches techniques à l'étape 3, ou décoche la case ci-dessus pour voir les placeholders.")
-        else:
-            resultats = filtrer_et_scorer(df, besoin, temp_hivernale_design_C=temp_design)
-            st.write(f"Puissance minimale requise (avec marge de sécurité) : **{resultats['puissance_min_requise_kw'].iloc[0]:.2f} kW**")
+    # -----------------------------------------------------------------------
+    # DONNÉES PAC
+    # -----------------------------------------------------------------------
 
-            for _, row in resultats.iterrows():
-                with st.container(border=True):
-                    c1, c2 = st.columns([3, 1])
-                    with c1:
-                        st.markdown(f"### {row['modele']}")
-                        st.write(f"Fabricant : {row.get('fabricant', 'n/d')}")
-                        st.write(
-                            f"Puissance : {row['puissance_kw']} kW · COP : {row['cop']} · "
-                            f"Réservoir : {row['volume_reservoir_l']} L · "
-                            f"Temp. min : {row['temp_min_C']} °C · Bruit : {row['niveau_sonore_dB']} dB"
-                        )
-                        if row["compatible_climat"] is False:
-                            st.error("⚠️ Ne semble pas couvrir ta température de design hivernale.")
-                        if row["compatible_puissance"] is False:
-                            st.error("⚠️ Puissance possiblement insuffisante pour ton besoin.")
-                        if row["donnees_incompletes"]:
-                            st.info("ℹ️ Données incomplètes — score à interpréter avec prudence.")
-                    with c2:
-                        st.metric("Score", f"{row['score_final']:.2f}")
-                        if pd.notna(row.get("prix_estime_cad")):
-                            st.write(f"~{row['prix_estime_cad']:.0f} $ CAD")
+    puissance_kw = float(pac.get("puissance_corrigee_kw", 0.0))
+    nombre_unites = int(pac.get("nombre_unites", 1))
+    cop = float(pac.get("cop", 3.0))
 
-    with tab2:
-        ctx = ContexteSubvention(
-            energie_actuelle=st.session_state.energie,          # <-- liste (mix), plus une seule chaîne
-            type_appareil="dhw_heat_pump",
-            type_batiment=st.session_state.type_batiment,
-            revenu_sous_median=st.session_state.revenu_sous_median,
-            combine_plusieurs_mesures=st.session_state.combine_mesures,
+    energie_couverte_mwh = float(
+        pac.get("energie_couverte_mwh_an", 0.0)
+    )
+
+    conso_pac_mwh = float(
+        pac.get("consommation_elec_mwh_an", 0.0)
+    )
+
+    cout_projet = float(
+        pac.get("cout_total", 0.0)
+    )
+
+    # -----------------------------------------------------------------------
+    # TARIFS
+    # -----------------------------------------------------------------------
+
+    prix_elec = float(
+        tarifs.get(
+            "electricite",
+            {}
+        ).get("cout_moyen", 0.12)
+    )
+
+    prix_gaz = float(
+        tarifs.get(
+            "gaz_naturel",
+            {}
+        ).get("cout_moyen", 0.42)
+    )
+
+    # -----------------------------------------------------------------------
+    # CHOIX DE LA RÉFÉRENCE
+    # -----------------------------------------------------------------------
+
+    st.markdown("### Situation de référence")
+
+    reference = st.radio(
+        "Équipement remplacé",
+        options=[
+            "electricite",
+            "gaz_naturel",
+        ],
+        format_func=lambda x: {
+            "electricite": "Chauffage / chauffe-eau électrique",
+            "gaz_naturel": "Chauffage / chauffe-eau au gaz naturel",
+        }[x],
+        horizontal=True,
+    )
+
+    # -----------------------------------------------------------------------
+    # ÉNERGIE DE RÉFÉRENCE
+    # -----------------------------------------------------------------------
+
+    energie_couverte_kwh = energie_couverte_mwh * 1000
+    conso_pac_kwh = conso_pac_mwh * 1000
+
+    cout_pac = conso_pac_kwh * prix_elec
+
+    if reference == "electricite":
+
+        rendement_reference = st.number_input(
+            "Rendement du système électrique existant (%)",
+            min_value=1.0,
+            max_value=100.0,
+            value=100.0,
+            step=1.0,
         )
-        resultats_sub = simuler(SUBSIDIES_YAML, ctx)
 
-        if not resultats_sub:
-            st.write("Aucun programme applicable trouvé pour ce contexte dans la base de règles actuelle.")
-        else:
-            lo, hi = total_estime(resultats_sub)
-            st.metric("Estimation totale cumulée (grossière)", f"{lo:,.0f} $ – {hi:,.0f} $ CAD")
-            st.caption("⚠️ Estimation indicative seulement — basée sur des fourchettes approximatives, pas les barèmes officiels exacts. Vérifie chaque montant via les liens ci-dessous avant de budgéter ton projet.")
+        conso_reference_kwh = (
+            energie_couverte_kwh
+            / (rendement_reference / 100)
+        )
 
-            for r in resultats_sub:
-                badge = {"admissible_probable": "🟢", "a_verifier": "🟡", "non_applicable": "🔴"}[r.statut]
-                with st.container(border=True):
-                    st.markdown(f"{badge} **{r.nom}** — {r.administrateur}")
-                    if r.montant_min is not None or r.montant_max is not None:
-                        st.write(f"Montant estimé : {r.montant_min or 0:,.0f} $ – {r.montant_max or 0:,.0f} $ CAD")
-                    st.write(r.note)
-                    if r.conditions_a_confirmer:
-                        with st.popover("Conditions à confirmer"):
-                            for cdt in r.conditions_a_confirmer:
-                                st.write(f"- {cdt}")
-                    st.write(f"[Source officielle]({r.source_url}) · Confiance des données : {r.confidence} ")
+        cout_reference = (
+            conso_reference_kwh
+            * prix_elec
+        )
+
+        energie_evitee = conso_reference_kwh
+        unite_evitee = "kWh"
+
+    else:
+
+        rendement_reference = st.number_input(
+            "Rendement du système gaz existant (%)",
+            min_value=1.0,
+            max_value=100.0,
+            value=80.0,
+            step=1.0,
+        )
+
+        # Approximation énergétique du gaz naturel
+        KWH_PAR_M3_GAZ = 10.55
+
+        gaz_reference_m3 = (
+            energie_couverte_kwh
+            / (
+                KWH_PAR_M3_GAZ
+                * rendement_reference / 100
+            )
+        )
+
+        cout_reference = (
+            gaz_reference_m3
+            * prix_gaz
+        )
+
+        energie_evitee = gaz_reference_m3
+        unite_evitee = "m³"
+
+    # -----------------------------------------------------------------------
+    # ÉCONOMIES
+    # -----------------------------------------------------------------------
+
+    economie_annuelle = (
+        cout_reference
+        - cout_pac
+    )
+
+    if economie_annuelle > 0:
+        pri_avant = (
+            cout_projet
+            / economie_annuelle
+        )
+    else:
+        pri_avant = None
+
+    # -----------------------------------------------------------------------
+    # ESTIMATION OSE
+    # -----------------------------------------------------------------------
 
     st.divider()
-    if st.button("← Précédent", key="prev_5"):
+
+    st.markdown("### Estimation OSE")
+
+    taux_ose_kw = st.number_input(
+        "Taux d'aide OSE utilisé pour l'estimation ($/kW)",
+        min_value=0.0,
+        value=530.0,
+        step=10.0,
+        help=(
+            "Valeur de travail à valider avec la version officielle "
+            "de l'outil OSE applicable au projet."
+        ),
+    )
+
+    puissance_ose_kw = st.number_input(
+        "Puissance admissible OSE (kW)",
+        min_value=0.0,
+        value=float(puissance_kw),
+        step=1.0,
+    )
+
+    appui_ose_brut = (
+        puissance_ose_kw
+        * taux_ose_kw
+    )
+
+    plafond_pct = st.number_input(
+        "Plafond d'aide (% du coût du projet)",
+        min_value=0.0,
+        max_value=100.0,
+        value=100.0,
+        step=5.0,
+    )
+
+    plafond_aide = (
+        cout_projet
+        * plafond_pct / 100
+    )
+
+    appui_ose = min(
+        appui_ose_brut,
+        plafond_aide
+    )
+
+    cout_net = (
+        cout_projet
+        - appui_ose
+    )
+
+    if economie_annuelle > 0:
+        pri_apres = (
+            cout_net
+            / economie_annuelle
+        )
+    else:
+        pri_apres = None
+
+    # -----------------------------------------------------------------------
+    # AFFICHAGE RÉSULTATS
+    # -----------------------------------------------------------------------
+
+    st.divider()
+
+    st.markdown("### Résultats")
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    c1.metric(
+        "Puissance PAC",
+        f"{puissance_kw:,.1f} kW"
+    )
+
+    c2.metric(
+        "Énergie couverte",
+        f"{energie_couverte_mwh:,.1f} MWh/an"
+    )
+
+    c3.metric(
+        "Consommation PAC",
+        f"{conso_pac_mwh:,.1f} MWh/an"
+    )
+
+    c4.metric(
+        "COP",
+        f"{cop:.2f}"
+    )
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    c1.metric(
+        f"Énergie évitée ({unite_evitee})",
+        f"{energie_evitee:,.0f}"
+    )
+
+    c2.metric(
+        "Coût de référence",
+        f"{cout_reference:,.0f} $/an"
+    )
+
+    c3.metric(
+        "Coût PAC",
+        f"{cout_pac:,.0f} $/an"
+    )
+
+    c4.metric(
+        "Économie annuelle",
+        f"{economie_annuelle:,.0f} $/an"
+    )
+
+    st.divider()
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    c1.metric(
+        "Coût projet",
+        f"{cout_projet:,.0f} $"
+    )
+
+    c2.metric(
+        "Aide OSE estimée",
+        f"{appui_ose:,.0f} $"
+    )
+
+    c3.metric(
+        "PRI avant aide",
+        (
+            f"{pri_avant:.1f} ans"
+            if pri_avant is not None
+            else "Non rentable"
+        )
+    )
+
+    c4.metric(
+        "PRI après aide",
+        (
+            f"{pri_apres:.1f} ans"
+            if pri_apres is not None
+            else "Non rentable"
+        )
+    )
+
+    # -----------------------------------------------------------------------
+    # DIAGNOSTIC
+    # -----------------------------------------------------------------------
+
+    if pri_apres is None:
+        st.error(
+            "🔴 Le projet augmente actuellement les coûts d'exploitation."
+        )
+
+    elif pri_apres <= 5:
+        st.success(
+            "🟢 Projet économiquement très intéressant."
+        )
+
+    elif pri_apres <= 10:
+        st.success(
+            "🟢 Projet économiquement intéressant."
+        )
+
+    elif pri_apres <= 15:
+        st.warning(
+            "🟡 Projet à considérer selon les objectifs de décarbonation "
+            "et les aides disponibles."
+        )
+
+    else:
+        st.error(
+            "🔴 Rentabilité économique faible avec les hypothèses actuelles."
+        )
+
+    # -----------------------------------------------------------------------
+    # TABLEAU SYNTHÈSE TYPE OSE
+    # -----------------------------------------------------------------------
+
+    st.markdown("### Synthèse du scénario")
+
+    df_synthese = pd.DataFrame(
+        {
+            "Paramètre": [
+                "Nombre d'unités",
+                "Puissance admissible",
+                "Besoin couvert",
+                "Électricité consommée",
+                "Énergie de référence évitée",
+                "Économie annuelle",
+                "Investissement",
+                "Aide OSE estimée",
+                "PRI avant aide",
+                "PRI après aide",
+            ],
+
+            "Valeur": [
+                nombre_unites,
+                f"{puissance_ose_kw:,.1f} kW",
+                f"{energie_couverte_mwh:,.1f} MWh/an",
+                f"{conso_pac_mwh:,.1f} MWh/an",
+                f"{energie_evitee:,.0f} {unite_evitee}/an",
+                f"{economie_annuelle:,.0f} $/an",
+                f"{cout_projet:,.0f} $",
+                f"{appui_ose:,.0f} $",
+                (
+                    f"{pri_avant:.1f} ans"
+                    if pri_avant is not None
+                    else "N/A"
+                ),
+                (
+                    f"{pri_apres:.1f} ans"
+                    if pri_apres is not None
+                    else "N/A"
+                ),
+            ],
+        }
+    )
+
+    st.dataframe(
+        df_synthese,
+        use_container_width=True,
+        hide_index=True,
+    )
+
+    # -----------------------------------------------------------------------
+    # NAVIGATION
+    # -----------------------------------------------------------------------
+
+    st.divider()
+
+    if st.button(
+        "← Précédent",
+        key="prev_5"
+    ):
         st.session_state.step = 4
         st.rerun()
