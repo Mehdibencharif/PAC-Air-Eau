@@ -823,64 +823,439 @@ if st.session_state.step == 3:
         st.rerun()
 
 # ---------------------------------------------------------------------------
-# ÉTAPE 4 — Fiches techniques
+# ÉTAPE 4 — Sélection et conditions d'opération de la thermopompe
 # ---------------------------------------------------------------------------
-elif st.session_state.step == 4:
-    st.subheader("4. Ajoute des fiches techniques (PDF) — optionnel")
+
+if st.session_state.step == 4:
+
+    st.subheader("4. Sélection et conditions d'opération de la thermopompe")
+
     st.caption(
-        "L'extraction se fait par reconnaissance de motifs texte (COP, puissance, "
-        "réservoir, plage de température, bruit, réfrigérant). Si une fiche est "
-        "scannée en image ou mal structurée, certains champs resteront vides — "
-        "tu pourras les compléter manuellement."
+        "Définis les caractéristiques de la thermopompe et les conditions réelles "
+        "d'installation. Ces données serviront à estimer la capacité réellement "
+        "disponible, l'énergie couverte et la rentabilité du projet."
     )
 
-    fichiers = st.file_uploader("Fiches techniques PDF", type=["pdf"], accept_multiple_files=True)
+    # -----------------------------------------------------------------------
+    # FICHE TECHNIQUE
+    # -----------------------------------------------------------------------
+
+    st.markdown("### 📄 Fiche technique")
+
+    fichiers = st.file_uploader(
+        "Ajouter une fiche technique PDF — optionnel",
+        type=["pdf"],
+        accept_multiple_files=False,
+        key="fiche_pac",
+    )
+
+    specs = None
 
     if fichiers:
-        for f in fichiers:
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                tmp.write(f.read())
-                tmp_path = tmp.name
 
-            try:
-                specs = extraire_specs(tmp_path, nom_fichier=f.name)
-            except Exception as e:
-                st.error(f"Erreur d'extraction pour {f.name} : {e}")
-                continue
+        with tempfile.NamedTemporaryFile(
+            delete=False,
+            suffix=".pdf"
+        ) as tmp:
 
-            with st.expander(f"📄 {f.name}", expanded=True):
-                col1, col2, col3, col4 = st.columns(4)
-                nom_modele = col1.text_input("Nom du modèle", value=f.name.replace(".pdf", ""), key=f"nom_{f.name}")
-                puissance = col2.number_input("Puissance (kW)", value=specs.puissance_kw or 0.0, key=f"p_{f.name}")
-                cop = col3.number_input("COP", value=specs.cop or 0.0, key=f"cop_{f.name}")
-                prix = col4.number_input("Prix estimé (CAD)", value=0.0, key=f"prix_{f.name}")
+            tmp.write(fichiers.getvalue())
+            tmp_path = tmp.name
 
-                manquants = champs_manquants(specs)
-                if manquants:
-                    st.warning(f"Champs non détectés automatiquement, à vérifier/compléter : {', '.join(manquants)}")
+        try:
+            specs = extraire_specs(
+                tmp_path,
+                nom_fichier=fichiers.name
+            )
 
-                if specs.lignes_source:
-                    with st.popover("Voir les lignes sources détectées"):
-                        for champ, ligne in specs.lignes_source.items():
-                            st.write(f"**{champ}** : `{ligne}`")
-
-                if st.button("Ajouter au catalogue de comparaison", key=f"add_{f.name}"):
-                    specs.puissance_kw = puissance or specs.puissance_kw
-                    specs.cop = cop or specs.cop
-                    ligne = specs_vers_ligne(specs, nom_modele=nom_modele, prix_estime=prix or None)
-                    st.session_state.catalogue = ajouter_modele(st.session_state.catalogue, ligne)
-                    st.success(f"{nom_modele} ajouté au catalogue.")
+        except Exception as e:
+            st.warning(
+                f"L'extraction automatique n'a pas fonctionné : {e}. "
+                "Tu peux entrer les valeurs manuellement."
+            )
 
     st.divider()
-    st.write("**Catalogue actuel (exemples + fiches ajoutées) :**")
-    st.dataframe(st.session_state.catalogue, use_container_width=True)
-    st.caption("Les lignes 'Exemple A/B/C' sont des placeholders — supprime-les ou ignore-les dans le comparatif si tu n'as que tes propres fiches.")
+
+    # -----------------------------------------------------------------------
+    # CARACTÉRISTIQUES PRINCIPALES
+    # -----------------------------------------------------------------------
+
+    st.markdown("### ⚙️ Caractéristiques de la thermopompe")
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    nom_modele = c1.text_input(
+        "Modèle",
+        value=(
+            fichiers.name.replace(".pdf", "")
+            if fichiers
+            else st.session_state.get("pac_nom", "")
+        ),
+    )
+
+    nombre_unites = c2.number_input(
+        "Nombre d'unités",
+        min_value=1,
+        value=int(
+            st.session_state.get("pac_nombre_unites", 1)
+        ),
+        step=1,
+    )
+
+    puissance_nominale_kw = c3.number_input(
+        "Puissance thermique nominale (kW)",
+        min_value=0.0,
+        value=float(
+            specs.puissance_kw
+            if specs and specs.puissance_kw
+            else st.session_state.get(
+                "pac_puissance_nominale_kw",
+                0.0
+            )
+        ),
+        step=1.0,
+    )
+
+    cop_nominal = c4.number_input(
+        "COP nominal",
+        min_value=0.1,
+        value=float(
+            specs.cop
+            if specs and specs.cop
+            else st.session_state.get(
+                "pac_cop_nominal",
+                3.0
+            )
+        ),
+        step=0.1,
+    )
+
+    st.divider()
+
+    # -----------------------------------------------------------------------
+    # CONDITIONS DE TEMPÉRATURE
+    # -----------------------------------------------------------------------
+
+    st.markdown("### 🌡️ Conditions réelles d'opération")
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    temp_air_reference = c1.number_input(
+        "Température d'air de référence fabricant (°C)",
+        value=float(
+            st.session_state.get(
+                "temp_air_reference",
+                20.0
+            )
+        ),
+        help=(
+            "Température utilisée dans la fiche technique pour "
+            "annoncer la puissance nominale."
+        ),
+    )
+
+    temp_salle = c2.number_input(
+        "Température réelle de la salle mécanique (°C)",
+        value=float(
+            st.session_state.get(
+                "temp_salle",
+                20.0
+            )
+        ),
+    )
+
+    temp_eau_entree = c3.number_input(
+        "Température eau entrée PAC (°C)",
+        value=float(
+            st.session_state.get(
+                "temp_eau_entree",
+                45.0
+            )
+        ),
+    )
+
+    temp_eau_sortie = c4.number_input(
+        "Température eau sortie PAC (°C)",
+        value=float(
+            st.session_state.get(
+                "temp_eau_sortie",
+                60.0
+            )
+        ),
+    )
+
+    st.divider()
+
+    # -----------------------------------------------------------------------
+    # DISPONIBILITÉ
+    # -----------------------------------------------------------------------
+
+    st.markdown("### ⏱️ Disponibilité annuelle")
+
+    c1, c2, c3 = st.columns(3)
+
+    heures_theoriques = c1.number_input(
+        "Heures théoriques disponibles / an",
+        min_value=0,
+        max_value=8760,
+        value=8760,
+        step=100,
+    )
+
+    disponibilite_pct = c2.number_input(
+        "Disponibilité réelle (%)",
+        min_value=0.0,
+        max_value=100.0,
+        value=float(
+            st.session_state.get(
+                "disponibilite_pct",
+                90.0
+            )
+        ),
+        step=1.0,
+        help=(
+            "Permet de tenir compte des arrêts, entretien "
+            "et indisponibilités."
+        ),
+    )
+
+    heures_disponibles = (
+        heures_theoriques
+        * disponibilite_pct
+        / 100
+    )
+
+    c3.metric(
+        "Heures disponibles",
+        f"{heures_disponibles:,.0f} h/an"
+    )
+
+    st.divider()
+
+    # -----------------------------------------------------------------------
+    # CORRECTION DE CAPACITÉ
+    # -----------------------------------------------------------------------
+
+    st.markdown("### 📉 Capacité corrigée aux conditions réelles")
+
+    # Première approche simple :
+    # coefficient modifiable tant qu'on n'a pas de courbe fabricant
+
+    ecart_temp_air = (
+        temp_salle - temp_air_reference
+    )
+
+    coefficient_correction = st.number_input(
+        "Facteur de correction de capacité",
+        min_value=0.1,
+        max_value=1.5,
+        value=float(
+            st.session_state.get(
+                "facteur_correction_capacite",
+                1.0
+            )
+        ),
+        step=0.01,
+        help=(
+            "1,00 = puissance nominale. "
+            "À ajuster selon les tables de performance fabricant. "
+            "À terme, ce facteur pourra être calculé automatiquement."
+        ),
+    )
+
+    puissance_corrigee_kw = (
+        puissance_nominale_kw
+        * coefficient_correction
+        * nombre_unites
+    )
+
+    c1, c2, c3 = st.columns(3)
+
+    c1.metric(
+        "Puissance nominale totale",
+        f"{puissance_nominale_kw * nombre_unites:,.1f} kW"
+    )
+
+    c2.metric(
+        "Puissance corrigée",
+        f"{puissance_corrigee_kw:,.1f} kW"
+    )
+
+    c3.metric(
+        "Écart température air",
+        f"{ecart_temp_air:+.1f} °C"
+    )
+
+    # -----------------------------------------------------------------------
+    # ÉNERGIE ANNUELLE MAXIMALE FOURNISSABLE
+    # -----------------------------------------------------------------------
+
+    energie_max_kwh_an = (
+        puissance_corrigee_kw
+        * heures_disponibles
+    )
+
+    energie_max_mwh_an = (
+        energie_max_kwh_an / 1000
+    )
+
+    st.info(
+        f"Énergie thermique maximale théorique fournie : "
+        f"**{energie_max_mwh_an:,.1f} MWh/an**"
+    )
+
+    # -----------------------------------------------------------------------
+    # COMPARAISON AU BESOIN
+    # -----------------------------------------------------------------------
+
+    besoin_mwh_an = 0.0
+
+    if "besoin_industriel" in st.session_state:
+        besoin_mwh_an = (
+            st.session_state.besoin_industriel.get(
+                "energie_mwh_an",
+                0.0
+            )
+        )
+
+    if besoin_mwh_an > 0:
+
+        energie_couverte_mwh = min(
+            energie_max_mwh_an,
+            besoin_mwh_an
+        )
+
+        couverture_pct = (
+            energie_couverte_mwh
+            / besoin_mwh_an
+            * 100
+        )
+
+        c1, c2, c3 = st.columns(3)
+
+        c1.metric(
+            "Besoin thermique du site",
+            f"{besoin_mwh_an:,.1f} MWh/an"
+        )
+
+        c2.metric(
+            "Énergie couverte par la PAC",
+            f"{energie_couverte_mwh:,.1f} MWh/an"
+        )
+
+        c3.metric(
+            "Part du besoin couverte",
+            f"{couverture_pct:,.1f} %"
+        )
+
+    else:
+
+        energie_couverte_mwh = 0.0
+        couverture_pct = 0.0
+
+        st.warning(
+            "Aucun besoin thermique disponible depuis l'étape 3."
+        )
+
+    st.divider()
+
+    # -----------------------------------------------------------------------
+    # CONSOMMATION ÉLECTRIQUE
+    # -----------------------------------------------------------------------
+
+    st.markdown("### ⚡ Consommation électrique estimée")
+
+    if cop_nominal > 0:
+
+        consommation_elec_mwh = (
+            energie_couverte_mwh
+            / cop_nominal
+        )
+
+    else:
+        consommation_elec_mwh = 0.0
+
+    st.metric(
+        "Consommation électrique PAC",
+        f"{consommation_elec_mwh:,.1f} MWh/an"
+    )
+
+    # -----------------------------------------------------------------------
+    # COÛT PROJET
+    # -----------------------------------------------------------------------
+
+    st.divider()
+
+    st.markdown("### 💰 Coût du projet")
 
     c1, c2 = st.columns(2)
-    if c1.button("← Précédent", key="prev_4"):
+
+    cout_unitaire = c1.number_input(
+        "Coût estimé par unité ($)",
+        min_value=0.0,
+        value=float(
+            st.session_state.get(
+                "pac_cout_unitaire",
+                0.0
+            )
+        ),
+        step=1000.0,
+    )
+
+    cout_total = (
+        cout_unitaire
+        * nombre_unites
+    )
+
+    c2.metric(
+        "Investissement total",
+        f"{cout_total:,.0f} $"
+    )
+
+    # -----------------------------------------------------------------------
+    # SAUVEGARDE
+    # -----------------------------------------------------------------------
+
+    st.session_state.pac_selectionnee = {
+        "modele": nom_modele,
+        "nombre_unites": nombre_unites,
+        "puissance_nominale_kw": puissance_nominale_kw,
+        "puissance_corrigee_kw": puissance_corrigee_kw,
+        "cop": cop_nominal,
+        "temp_air_reference_C": temp_air_reference,
+        "temp_salle_C": temp_salle,
+        "temp_eau_entree_C": temp_eau_entree,
+        "temp_eau_sortie_C": temp_eau_sortie,
+        "disponibilite_pct": disponibilite_pct,
+        "heures_disponibles_an": heures_disponibles,
+        "facteur_correction_capacite": coefficient_correction,
+        "energie_max_mwh_an": energie_max_mwh_an,
+        "energie_couverte_mwh_an": energie_couverte_mwh,
+        "couverture_pct": couverture_pct,
+        "consommation_elec_mwh_an": consommation_elec_mwh,
+        "cout_unitaire": cout_unitaire,
+        "cout_total": cout_total,
+    }
+
+    # -----------------------------------------------------------------------
+    # NAVIGATION
+    # -----------------------------------------------------------------------
+
+    st.divider()
+
+    c1, c2 = st.columns(2)
+
+    if c1.button(
+        "← Précédent",
+        key="prev_4"
+    ):
         st.session_state.step = 3
         st.rerun()
-    if c2.button("Voir les résultats →", type="primary", key="next_4"):
+
+    if c2.button(
+        "Suivant →",
+        type="primary",
+        key="next_4"
+    ):
         st.session_state.step = 5
         st.rerun()
 
