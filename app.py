@@ -1172,6 +1172,116 @@ elif st.session_state.step == 4:
         f"{consommation_elec_kwh:,.0f} kWh/an"
     )
 
+    st.divider()
+
+    # -----------------------------------------------------------------------
+    # EFFET SUR LA SALLE MÉCANIQUE (REFROIDISSEMENT)
+    # -----------------------------------------------------------------------
+
+    st.markdown("### ❄️ Effet sur la salle mécanique")
+
+    st.caption(
+        "Une thermopompe air-eau intérieure prélève de la chaleur à l'air de la salle : "
+        "chaleur extraite = énergie fournie × (1 − 1/COP). En hiver, le chauffage du bâtiment "
+        "doit compenser cette perte (coût supplémentaire). En été, la salle est refroidie "
+        "gratuitement (crédit si elle est climatisée)."
+    )
+
+    sel_prev = st.session_state.get("pac_selectionnee", {})
+
+    fraction_extraite = max(0.0, 1 - 1 / cop_nominal)
+
+    puissance_evap_kw = puissance_corrigee_kw * fraction_extraite
+    chaleur_extraite_kwh_an = energie_couverte_kwh * fraction_extraite
+
+    options_salle = ["non_chauffee", "electricite", "gaz_naturel"]
+
+    mode_chauffage_salle = st.radio(
+        "Chauffage qui compense la chaleur extraite en hiver",
+        options=options_salle,
+        index=options_salle.index(
+            sel_prev.get("salle_mode_chauffage", "electricite")
+        ),
+        format_func=lambda x: {
+            "non_chauffee": "Salle non chauffée (aucun apport)",
+            "electricite": "Chauffage électrique",
+            "gaz_naturel": "Chauffage au gaz naturel",
+        }[x],
+        horizontal=True,
+    )
+
+    if sel_prev.get("salle_mode_chauffage") == mode_chauffage_salle:
+        rdt_salle_defaut = float(sel_prev.get("salle_rdt_chauffage_pct", 100.0))
+    else:
+        rdt_salle_defaut = 100.0 if mode_chauffage_salle == "electricite" else 80.0
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    part_saison_chauffage_pct = c1.number_input(
+        "Part de l'énergie PAC en saison de chauffage (%)",
+        min_value=0.0,
+        max_value=100.0,
+        value=float(sel_prev.get("salle_part_saison_chauffage_pct", 60.0)),
+        step=5.0,
+        help=(
+            "Fraction de l'énergie produite par la PAC pendant les périodes où "
+            "la salle doit être chauffée. Au Québec, environ 55 à 65 % de l'année."
+        ),
+    )
+
+    rendement_chauffage_salle_pct = c2.number_input(
+        "Rendement du chauffage de compensation (%)",
+        min_value=1.0,
+        max_value=400.0,
+        value=min(max(rdt_salle_defaut, 1.0), 400.0),
+        step=1.0,
+        disabled=(mode_chauffage_salle == "non_chauffee"),
+    )
+
+    salle_climatisee = c3.checkbox(
+        "La salle est climatisée en été",
+        value=bool(sel_prev.get("salle_climatisee", False)),
+    )
+
+    cop_clim = c4.number_input(
+        "COP de la climatisation",
+        min_value=0.5,
+        max_value=10.0,
+        value=float(sel_prev.get("salle_cop_clim", 3.0)),
+        step=0.1,
+        disabled=not salle_climatisee,
+    )
+
+    if mode_chauffage_salle == "non_chauffee":
+        st.warning(
+            "Salle non chauffée : l'air va se refroidir et le COP de la PAC va baisser. "
+            "Aucun coût de compensation n'est compté ici — prévoir un apport de chaleur "
+            "ou une source d'air suffisante."
+        )
+
+    chaleur_hiver_kwh_an = (
+        chaleur_extraite_kwh_an
+        * part_saison_chauffage_pct / 100
+    )
+
+    c1, c2, c3 = st.columns(3)
+
+    c1.metric(
+        "Puissance extraite de la salle",
+        f"{puissance_evap_kw:,.1f} kW",
+        help=f"≈ {puissance_evap_kw / 3.517:,.1f} tonnes de réfrigération",
+    )
+
+    c2.metric(
+        "Chaleur extraite",
+        f"{chaleur_extraite_kwh_an:,.0f} kWh/an"
+    )
+
+    c3.metric(
+        "Dont en saison de chauffage",
+        f"{chaleur_hiver_kwh_an:,.0f} kWh/an"
+    )
+
     # -----------------------------------------------------------------------
     # COÛT PROJET
     # -----------------------------------------------------------------------
@@ -1225,6 +1335,13 @@ elif st.session_state.step == 4:
         "energie_couverte_kwh_an": energie_couverte_kwh,
         "couverture_pct": couverture_pct,
         "consommation_elec_kwh_an": consommation_elec_kwh,
+        "puissance_evap_kw": puissance_evap_kw,
+        "chaleur_extraite_kwh_an": chaleur_extraite_kwh_an,
+        "salle_mode_chauffage": mode_chauffage_salle,
+        "salle_rdt_chauffage_pct": rendement_chauffage_salle_pct,
+        "salle_part_saison_chauffage_pct": part_saison_chauffage_pct,
+        "salle_climatisee": salle_climatisee,
+        "salle_cop_clim": cop_clim,
         "cout_unitaire": cout_unitaire,
         "cout_total": cout_total,
     }
@@ -1476,9 +1593,45 @@ elif st.session_state.step == 5:
     # ÉCONOMIES
     # -----------------------------------------------------------------------
 
-    economie_annuelle = (
+    # Effet sur la salle mécanique (chaleur extraite de l'air par la PAC)
+    chaleur_extraite_kwh = float(pac.get("chaleur_extraite_kwh_an", 0.0))
+    mode_salle = pac.get("salle_mode_chauffage", "electricite")
+    part_hiver = float(pac.get("salle_part_saison_chauffage_pct", 60.0)) / 100
+    rdt_salle = max(float(pac.get("salle_rdt_chauffage_pct", 100.0)) / 100, 0.01)
+    salle_climatisee = bool(pac.get("salle_climatisee", False))
+    cop_clim = max(float(pac.get("salle_cop_clim", 3.0)), 0.01)
+
+    chaleur_hiver_kwh = chaleur_extraite_kwh * part_hiver
+    chaleur_ete_kwh = chaleur_extraite_kwh - chaleur_hiver_kwh
+
+    if mode_salle == "electricite":
+        cout_penalite_salle = chaleur_hiver_kwh / rdt_salle * prix_elec
+    elif mode_salle == "gaz_naturel":
+        cout_penalite_salle = (
+            chaleur_hiver_kwh
+            / rdt_salle
+            / KWH_PAR_UNITE["gaz_naturel"]
+            * prix_gaz
+        )
+    else:
+        cout_penalite_salle = 0.0
+
+    if salle_climatisee:
+        credit_clim_salle = chaleur_ete_kwh / cop_clim * prix_elec
+    else:
+        credit_clim_salle = 0.0
+
+    # Positif = coût supplémentaire, négatif = gain
+    effet_salle_net = cout_penalite_salle - credit_clim_salle
+
+    economie_brute = (
         cout_reference
         - cout_pac
+    )
+
+    economie_annuelle = (
+        economie_brute
+        - effet_salle_net
     )
 
     if economie_annuelle > 0:
@@ -1599,8 +1752,30 @@ elif st.session_state.step == 5:
     )
 
     c4.metric(
-        "Économie annuelle",
+        "Économie annuelle nette",
         f"{economie_annuelle:,.0f} $/an"
+    )
+
+    c1, c2, c3, c4 = st.columns(4)
+
+    c1.metric(
+        "Économie avant effet salle",
+        f"{economie_brute:,.0f} $/an"
+    )
+
+    c2.metric(
+        "Pénalité chauffage salle",
+        f"{cout_penalite_salle:,.0f} $/an"
+    )
+
+    c3.metric(
+        "Crédit climatisation salle",
+        f"{credit_clim_salle:,.0f} $/an"
+    )
+
+    c4.metric(
+        "Effet net salle (+ = coût)",
+        f"{effet_salle_net:+,.0f} $/an"
     )
 
     st.divider()
@@ -1679,7 +1854,8 @@ elif st.session_state.step == 5:
                 "Besoin couvert",
                 "Électricité consommée",
                 "Énergie de référence évitée",
-                "Économie annuelle",
+                "Économie annuelle nette",
+                "Effet net sur la salle (+ = coût)",
                 "Investissement",
                 "Aide OSE estimée",
                 "PRI avant aide",
@@ -1693,6 +1869,7 @@ elif st.session_state.step == 5:
                 f"{conso_pac_kwh:,.0f} kWh/an",
                 f"{energie_evitee:,.0f} {unite_evitee}/an",
                 f"{economie_annuelle:,.0f} $/an",
+                f"{effet_salle_net:+,.0f} $/an",
                 f"{cout_projet:,.0f} $",
                 f"{appui_ose:,.0f} $",
                 (
