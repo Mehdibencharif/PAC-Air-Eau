@@ -1200,7 +1200,12 @@ elif st.session_state.step == 4:
         "Chauffage qui compense la chaleur extraite en hiver",
         options=options_salle,
         index=options_salle.index(
-            sel_prev.get("salle_mode_chauffage", "electricite")
+            sel_prev.get(
+                "salle_mode_chauffage",
+                "gaz_naturel"
+                if "gaz_naturel" in st.session_state.get("energie", [])
+                else "electricite",
+            )
         ),
         format_func=lambda x: {
             "non_chauffee": "Salle non chauffée (aucun apport)",
@@ -1841,6 +1846,70 @@ elif st.session_state.step == 5:
         )
 
     # -----------------------------------------------------------------------
+    # DIAGNOSTIC DÉTAILLÉ : COÛT PAR kWh UTILE ET COP MINIMUM
+    # -----------------------------------------------------------------------
+
+    if energie_couverte_kwh > 0:
+
+        cout_kwh_ref = cout_reference / energie_couverte_kwh
+        cout_kwh_pac = cout_pac / energie_couverte_kwh
+        cout_kwh_salle = effet_salle_net / energie_couverte_kwh
+
+        st.caption(
+            f"Coût par kWh de chaleur utile — référence : {cout_kwh_ref:.4f} $/kWh · "
+            f"PAC (électricité) : {cout_kwh_pac:.4f} $/kWh · "
+            f"effet salle : {cout_kwh_salle:+.4f} $/kWh. "
+            "Le projet est rentable seulement si la référence coûte plus cher que "
+            "PAC + effet salle."
+        )
+
+        def economie_nette_pour_cop(cop_test):
+            fraction = max(0.0, 1 - 1 / cop_test)
+            chaleur = energie_couverte_kwh * fraction
+            chaleur_h = chaleur * part_hiver
+            chaleur_e = chaleur - chaleur_h
+
+            if mode_salle == "electricite":
+                pen = chaleur_h / rdt_salle * prix_elec
+            elif mode_salle == "gaz_naturel":
+                pen = (
+                    chaleur_h / rdt_salle
+                    / KWH_PAR_UNITE["gaz_naturel"] * prix_gaz
+                )
+            else:
+                pen = 0.0
+
+            cred = (
+                chaleur_e / cop_clim * prix_elec
+                if salle_climatisee else 0.0
+            )
+
+            return (
+                cout_reference
+                - (energie_couverte_kwh / cop_test) * prix_elec
+                - (pen - cred)
+            )
+
+        cop_min = None
+        cop_test = 1.5
+        while cop_test <= 10.0:
+            if economie_nette_pour_cop(cop_test) > 0:
+                cop_min = cop_test
+                break
+            cop_test += 0.05
+
+        if cop_min is None:
+            st.caption(
+                "Aucun COP jusqu'à 10 ne donne une économie nette positive avec "
+                "ces hypothèses (prix des énergies et effet sur la salle)."
+            )
+        else:
+            st.caption(
+                f"COP minimum pour une économie nette positive : ≈ {cop_min:.2f} "
+                f"(COP actuel : {cop:.2f})."
+            )
+
+    # -----------------------------------------------------------------------
     # TABLEAU SYNTHÈSE TYPE OSE
     # -----------------------------------------------------------------------
 
@@ -1875,12 +1944,12 @@ elif st.session_state.step == 5:
                 (
                     f"{pri_avant:.1f} ans"
                     if pri_avant is not None
-                    else "N/A"
+                    else "Non rentable"
                 ),
                 (
                     f"{pri_apres:.1f} ans"
                     if pri_apres is not None
-                    else "N/A"
+                    else "Non rentable"
                 ),
             ],
         }
