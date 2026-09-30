@@ -1307,20 +1307,107 @@ elif st.session_state.step == 5:
     # CHOIX DE LA RÉFÉRENCE
     # -----------------------------------------------------------------------
 
-    st.markdown("### Situation de référence")
+    st.markdown("### Situation de référence — mix énergétique actuel")
 
-    reference = st.radio(
-        "Équipement remplacé",
-        options=[
-            "electricite",
-            "gaz_naturel",
-        ],
-        format_func=lambda x: {
-            "electricite": "Chauffage / chauffe-eau électrique",
-            "gaz_naturel": "Chauffage / chauffe-eau au gaz naturel",
-        }[x],
-        horizontal=True,
+    st.caption(
+        "Répartis le besoin thermique entre les sources d'énergie actuelles du site. "
+        "Les rendements viennent de l'étape 1 et les prix de l'étape 1 ou 2 (factures). "
+        "La thermopompe remplace cette répartition."
     )
+
+    # Contenu énergétique (kWh par unité physique) — valeurs approximatives
+    KWH_PAR_UNITE = {
+        "electricite": 1.0,
+        "gaz_naturel": 10.55,   # kWh/m³
+        "mazout": 10.7,         # kWh/L
+        "propane": 7.08,        # kWh/L
+    }
+
+    UNITE_PHYSIQUE = {
+        "electricite": "kWh",
+        "gaz_naturel": "m³",
+        "mazout": "L",
+        "propane": "L",
+    }
+
+    prix_reference = {
+        "electricite": prix_elec,
+        "gaz_naturel": prix_gaz,
+        "mazout": float(tarifs.get("mazout", {}).get("cout_moyen", 0.0)),
+        "propane": float(tarifs.get("propane", {}).get("cout_moyen", 0.0)),
+    }
+
+    sources_site = st.session_state.get("energie", ["electricite"])
+    sources_ref = [s for s in sources_site if s in KWH_PAR_UNITE]
+    sources_ignorees = [s for s in sources_site if s not in KWH_PAR_UNITE]
+
+    if sources_ignorees:
+        st.warning(
+            "Sources non prises en compte dans le calcul (pas de contenu énergétique défini) : "
+            + ", ".join(ENERGIE_LABELS.get(s, s) for s in sources_ignorees)
+        )
+
+    if not sources_ref:
+        sources_ref = ["electricite"]
+
+    part_defaut = 100.0 / len(sources_ref)
+
+    parts_saisies = {}
+    rendements_ref = {}
+
+    for src in sources_ref:
+
+        label_src = ENERGIE_LABELS.get(src, src)
+        unite_src = UNITE_PHYSIQUE[src]
+
+        c1, c2, c3 = st.columns(3)
+
+        parts_saisies[src] = c1.number_input(
+            f"Part du besoin — {label_src} (%)",
+            min_value=0.0,
+            max_value=100.0,
+            value=float(part_defaut),
+            step=5.0,
+        )
+
+        rdt_defaut = float(
+            equipements.get(src, {}).get(
+                "rendement_pct",
+                100.0 if src == "electricite" else 80.0
+            )
+        )
+
+        rendements_ref[src] = c2.number_input(
+            f"Rendement — {label_src} (%)",
+            min_value=1.0,
+            max_value=400.0,
+            value=min(max(rdt_defaut, 1.0), 400.0),
+            step=1.0,
+        )
+
+        c3.metric(
+            f"Prix — {label_src}",
+            f"{prix_reference[src]:.4f} $/{unite_src}"
+        )
+
+        if prix_reference[src] <= 0:
+            st.warning(
+                f"Prix de {label_src} à 0 $ : renseigne-le à l'étape 1 ou 2, "
+                "sinon le coût de référence est sous-estimé."
+            )
+
+    total_parts = sum(parts_saisies.values())
+
+    if total_parts <= 0:
+        st.error("Les parts totalisent 0 % : répartition égale utilisée pour le calcul.")
+        fractions = {src: 1.0 / len(sources_ref) for src in sources_ref}
+    else:
+        if abs(total_parts - 100.0) > 0.01:
+            st.warning(
+                f"Les parts totalisent {total_parts:.0f} % au lieu de 100 % — "
+                "elles sont normalisées automatiquement pour le calcul."
+            )
+        fractions = {src: parts_saisies[src] / total_parts for src in sources_ref}
 
     # -----------------------------------------------------------------------
     # ÉNERGIE DE RÉFÉRENCE
@@ -1328,57 +1415,62 @@ elif st.session_state.step == 5:
 
     cout_pac = conso_pac_kwh * prix_elec
 
-    if reference == "electricite":
+    cout_reference = 0.0
+    energie_evitee = 0.0
+    unite_evitee = "kWh équiv."
 
-        rendement_reference = st.number_input(
-            "Rendement du système électrique existant (%)",
-            min_value=1.0,
-            max_value=100.0,
-            value=100.0,
-            step=1.0,
+    lignes_reference = []
+
+    for src in sources_ref:
+
+        energie_utile_kwh = energie_couverte_kwh * fractions[src]
+
+        # Énergie primaire consommée par l'équipement existant
+        energie_primaire_kwh = (
+            energie_utile_kwh
+            / (rendements_ref[src] / 100)
         )
 
-        conso_reference_kwh = (
-            energie_couverte_kwh
-            / (rendement_reference / 100)
+        quantite = (
+            energie_primaire_kwh
+            / KWH_PAR_UNITE[src]
         )
 
-        cout_reference = (
-            conso_reference_kwh
-            * prix_elec
+        cout_src = (
+            quantite
+            * prix_reference[src]
         )
 
-        energie_evitee = conso_reference_kwh
-        unite_evitee = "kWh"
+        cout_reference += cout_src
+        energie_evitee += energie_primaire_kwh
 
-    else:
-
-        rendement_reference = st.number_input(
-            "Rendement du système gaz existant (%)",
-            min_value=1.0,
-            max_value=100.0,
-            value=80.0,
-            step=1.0,
+        lignes_reference.append(
+            {
+                "Source": ENERGIE_LABELS.get(src, src),
+                "Part (%)": fractions[src] * 100,
+                "Besoin couvert (kWh/an)": energie_utile_kwh,
+                "Rendement (%)": rendements_ref[src],
+                "Énergie consommée (kWh/an)": energie_primaire_kwh,
+                "Quantité": quantite,
+                "Unité": f"{UNITE_PHYSIQUE[src]}/an",
+                "Coût de référence ($/an)": cout_src,
+            }
         )
 
-        # Approximation énergétique du gaz naturel
-        KWH_PAR_M3_GAZ = 10.55
-
-        gaz_reference_m3 = (
-            energie_couverte_kwh
-            / (
-                KWH_PAR_M3_GAZ
-                * rendement_reference / 100
-            )
-        )
-
-        cout_reference = (
-            gaz_reference_m3
-            * prix_gaz
-        )
-
-        energie_evitee = gaz_reference_m3
-        unite_evitee = "m³"
+    st.dataframe(
+        pd.DataFrame(lignes_reference).style.format(
+            {
+                "Part (%)": "{:.1f}",
+                "Besoin couvert (kWh/an)": "{:,.0f}",
+                "Rendement (%)": "{:.1f}",
+                "Énergie consommée (kWh/an)": "{:,.0f}",
+                "Quantité": "{:,.0f}",
+                "Coût de référence ($/an)": "{:,.0f}",
+            }
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
 
     # -----------------------------------------------------------------------
     # ÉCONOMIES
