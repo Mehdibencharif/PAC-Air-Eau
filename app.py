@@ -460,16 +460,23 @@ elif st.session_state.step == 2:
 # ---------------------------------------------------------------------------
 # ÉTAPE 3 — Besoin thermique / consommation d'eau chaude
 # ---------------------------------------------------------------------------
-
-if st.session_state.step == 3:
+elif st.session_state.step == 3:
 
     st.subheader("3. Besoin thermique et consommation d'eau chaude")
 
     st.caption(
         "Définis les principaux postes de consommation d'eau chaude du site. "
-        "L'outil calcule ensuite le volume annuel, le besoin thermique annuel "
+        "L'outil calcule ensuite le débit, le besoin thermique annuel "
         "et la puissance moyenne requise."
     )
+
+    # -----------------------------------------------------------------------
+    # CONSTANTES
+    # -----------------------------------------------------------------------
+
+    GAL_US_TO_L = 3.78541
+    CP_EAU_KWH_KG_C = 0.001163
+    BTU_PAR_KWH = 3412.14
 
     # -----------------------------------------------------------------------
     # PARAMÈTRES GÉNÉRAUX
@@ -509,11 +516,12 @@ if st.session_state.step == 3:
 
     if "postes_ecs" not in st.session_state:
 
+        # Débits par défaut = anciens volumes (gal US/jour) ÷ (12 h × 60 min)
         st.session_state.postes_ecs = [
 
             {
                 "poste": "Lavage et assainissement des équipements",
-                "volume_gal_jour": 3200.0,
+                "debit_gpm": 3200.0 / 720,
                 "jours_an": 250,
                 "temperature_C": 60.0,
                 "inclure": True,
@@ -521,7 +529,7 @@ if st.session_state.step == 3:
 
             {
                 "poste": "Nettoyage en place (CIP)",
-                "volume_gal_jour": 1320.0,
+                "debit_gpm": 1320.0 / 720,
                 "jours_an": 250,
                 "temperature_C": 60.0,
                 "inclure": True,
@@ -529,7 +537,7 @@ if st.session_state.step == 3:
 
             {
                 "poste": "Lavage des planchers et surfaces",
-                "volume_gal_jour": 800.0,
+                "debit_gpm": 800.0 / 720,
                 "jours_an": 250,
                 "temperature_C": 60.0,
                 "inclure": True,
@@ -537,7 +545,7 @@ if st.session_state.step == 3:
 
             {
                 "poste": "Sanitaires et vestiaires du personnel",
-                "volume_gal_jour": 530.0,
+                "debit_gpm": 530.0 / 720,
                 "jours_an": 300,
                 "temperature_C": 60.0,
                 "inclure": True,
@@ -572,12 +580,13 @@ if st.session_state.step == 3:
                 key=f"poste_nom_{i}",
             )
 
-            volume_gal_jour = c2.number_input(
-                "Volume (gal US/jour)",
+            debit_gpm = c2.number_input(
+                "Débit (GPM)",
                 min_value=0.0,
-                value=float(poste["volume_gal_jour"]),
-                step=10.0,
-                key=f"poste_volume_{i}",
+                value=float(poste["debit_gpm"]),
+                step=0.1,
+                format="%.2f",
+                key=f"poste_debit_{i}",
             )
 
             jours_an = c3.number_input(
@@ -593,7 +602,10 @@ if st.session_state.step == 3:
                 "Température requise pour ce poste (°C)",
                 min_value=float(temp_froide),
                 max_value=100.0,
-                value=float(poste.get("temperature_C", temp_chaude_defaut)),
+                value=max(
+                    float(poste.get("temperature_C", temp_chaude_defaut)),
+                    float(temp_froide),
+                ),
                 step=1.0,
                 key=f"poste_temp_{i}",
             )
@@ -601,7 +613,7 @@ if st.session_state.step == 3:
             postes_modifies.append(
                 {
                     "poste": nom_poste,
-                    "volume_gal_jour": volume_gal_jour,
+                    "debit_gpm": debit_gpm,
                     "jours_an": jours_an,
                     "temperature_C": temperature_C,
                     "inclure": inclure,
@@ -619,7 +631,7 @@ if st.session_state.step == 3:
         st.session_state.postes_ecs.append(
             {
                 "poste": "Nouveau poste",
-                "volume_gal_jour": 0.0,
+                "debit_gpm": 0.0,
                 "jours_an": 250,
                 "temperature_C": temp_chaude_defaut,
                 "inclure": True,
@@ -634,13 +646,9 @@ if st.session_state.step == 3:
     # CALCUL DES BESOINS
     # -----------------------------------------------------------------------
 
-    GAL_US_TO_L = 3.78541
-    CP_EAU_KWH_KG_C = 0.001163
-
     resultats = []
 
-    total_volume_jour = 0.0
-    total_volume_annuel = 0.0
+    total_debit_gpm = 0.0
     total_energie_kwh_an = 0.0
 
     for poste in st.session_state.postes_ecs:
@@ -648,19 +656,25 @@ if st.session_state.step == 3:
         if not poste["inclure"]:
             continue
 
-        volume_jour_gal = poste["volume_gal_jour"]
+        debit_gpm = poste["debit_gpm"]
         jours_an = poste["jours_an"]
         temp_chaude = poste["temperature_C"]
-
-        volume_annuel_gal = volume_jour_gal * jours_an
-
-        volume_annuel_L = (
-            volume_annuel_gal * GAL_US_TO_L
-        )
 
         deltaT = max(
             temp_chaude - temp_froide,
             0
+        )
+
+        # GPM -> volume annuel (gal US)
+        volume_annuel_gal = (
+            debit_gpm
+            * 60
+            * heures_fonctionnement
+            * jours_an
+        )
+
+        volume_annuel_L = (
+            volume_annuel_gal * GAL_US_TO_L
         )
 
         # 1 litre d'eau ≈ 1 kg
@@ -670,77 +684,71 @@ if st.session_state.step == 3:
             * deltaT
         )
 
-        energie_mwh_an = energie_kwh_an / 1000
-
-        energie_mmbtu_an = (
-            energie_kwh_an * 0.003412
+        energie_btu_an = (
+            energie_kwh_an * BTU_PAR_KWH
         )
 
         resultats.append(
             {
                 "Poste de consommation": poste["poste"],
-                "Volume (gal US/jour)": volume_jour_gal,
+                "Débit (GPM)": debit_gpm,
                 "Jours/an": jours_an,
-                "Volume annuel (gal US)": volume_annuel_gal,
                 "Température (°C)": temp_chaude,
                 "ΔT (°C)": deltaT,
-                "Besoin thermique (MMBtu/an)": energie_mmbtu_an,
-                "Besoin thermique (MWh/an)": energie_mwh_an,
+                "Besoin thermique (kWh/an)": energie_kwh_an,
+                "Besoin thermique (Btu/an)": energie_btu_an,
             }
         )
 
-        total_volume_jour += volume_jour_gal
-        total_volume_annuel += volume_annuel_gal
+        total_debit_gpm += debit_gpm
         total_energie_kwh_an += energie_kwh_an
 
-  # -----------------------------------------------------------------------
-# AFFICHAGE DU TABLEAU
-# -----------------------------------------------------------------------
+    # -----------------------------------------------------------------------
+    # AFFICHAGE DU TABLEAU
+    # -----------------------------------------------------------------------
 
-if resultats:
+    if resultats:
 
-    df_besoins = pd.DataFrame(resultats)
+        df_besoins = pd.DataFrame(resultats)
 
-    st.markdown("### 📊 Résumé des besoins")
+        st.markdown("### 📊 Résumé des besoins")
 
-    st.dataframe(
-        df_besoins.style.format(
-            {
-                "Débit (GPM)": "{:,.1f}",
-                "Jours/an": "{:,.0f}",
-                "Température (°C)": "{:.1f}",
-                "ΔT (°C)": "{:.1f}",
-                "Besoin thermique (MMBtu/an)": "{:,.1f}",
-                "Besoin thermique (MWh/an)": "{:,.1f}",
-            }
-        ),
-        use_container_width=True,
-    )
-
-    total_mwh_an = total_energie_kwh_an / 1000
-
-    total_mmbtu_an = total_energie_kwh_an * 0.003412
-
-    # Nombre total d'heures de fonctionnement par année
-    total_heures_an = (
-        max(
-            [
-                p["jours_an"]
-                for p in st.session_state.postes_ecs
-                if p["inclure"]
-            ],
-            default=0
+        st.dataframe(
+            df_besoins.style.format(
+                {
+                    "Débit (GPM)": "{:,.2f}",
+                    "Jours/an": "{:,.0f}",
+                    "Température (°C)": "{:.1f}",
+                    "ΔT (°C)": "{:.1f}",
+                    "Besoin thermique (kWh/an)": "{:,.0f}",
+                    "Besoin thermique (Btu/an)": "{:,.0f}",
+                }
+            ),
+            use_container_width=True,
         )
-        * heures_fonctionnement
-    )
 
-    # Puissance thermique moyenne pendant les heures d'opération
-    if total_heures_an > 0:
-        puissance_moyenne_kw = (
-            total_energie_kwh_an / total_heures_an
+        total_btu_an = total_energie_kwh_an * BTU_PAR_KWH
+
+        # Nombre total d'heures de fonctionnement par année
+        total_heures_an = (
+            max(
+                [
+                    p["jours_an"]
+                    for p in st.session_state.postes_ecs
+                    if p["inclure"]
+                ],
+                default=0
+            )
+            * heures_fonctionnement
         )
-    else:
-        puissance_moyenne_kw = 0.0
+
+        # Puissance thermique moyenne pendant les heures d'opération
+        if total_heures_an > 0:
+            puissance_moyenne_kw = (
+                total_energie_kwh_an / total_heures_an
+            )
+        else:
+            puissance_moyenne_kw = 0.0
 
         # -------------------------------------------------------------------
         # INDICATEURS
@@ -749,18 +757,18 @@ if resultats:
         c1, c2, c3, c4 = st.columns(4)
 
         c1.metric(
-            "Volume total",
-            f"{total_volume_jour:,.0f} gal US/j"
+            "Débit cumulé",
+            f"{total_debit_gpm:,.2f} GPM"
         )
 
         c2.metric(
-            "Volume annuel",
-            f"{total_volume_annuel:,.0f} gal US/an"
+            "Besoin thermique",
+            f"{total_energie_kwh_an:,.0f} kWh/an"
         )
 
         c3.metric(
             "Besoin thermique",
-            f"{total_mwh_an:,.1f} MWh/an"
+            f"{total_btu_an:,.0f} Btu/an"
         )
 
         c4.metric(
@@ -768,32 +776,24 @@ if resultats:
             f"{puissance_moyenne_kw:,.1f} kW"
         )
 
-        st.caption(
-            f"Équivalent énergétique : "
-            f"{total_mmbtu_an:,.1f} MMBtu/an"
-        )
-
         # -------------------------------------------------------------------
-# SESSION STATE
-# -------------------------------------------------------------------
+        # SESSION STATE
+        # -------------------------------------------------------------------
 
-if resultats:
+        st.session_state.besoin_industriel = {
+            "debit_gpm": total_debit_gpm,
+            "energie_kwh_an": total_energie_kwh_an,
+            "energie_btu_an": total_btu_an,
+            "puissance_moyenne_kw": puissance_moyenne_kw,
+            "temp_froide_C": temp_froide,
+            "heures_fonctionnement_jour": heures_fonctionnement,
+            "postes": resultats,
+        }
 
-    st.session_state.besoin_industriel = {
-        "debit_gpm": total_debit_gpm,
-        "energie_kwh_an": total_energie_kwh_an,
-        "energie_mwh_an": total_mwh_an,
-        "energie_mmbtu_an": total_mmbtu_an,
-        "puissance_moyenne_kw": puissance_moyenne_kw,
-        "temp_froide_C": temp_froide,
-        "heures_fonctionnement_jour": heures_fonctionnement,
-        "postes": resultats,
-    }
-
-else:
-    st.warning(
-        "Aucun poste de consommation n'est sélectionné."
-    )
+    else:
+        st.warning(
+            "Aucun poste de consommation n'est sélectionné."
+        )
 
     # -----------------------------------------------------------------------
     # NAVIGATION
@@ -823,7 +823,7 @@ else:
 # ÉTAPE 4 — Sélection et conditions d'opération de la thermopompe
 # ---------------------------------------------------------------------------
 
-if st.session_state.step == 4:
+elif st.session_state.step == 4:
 
     st.subheader("4. Sélection et conditions d'opération de la thermopompe")
 
@@ -1091,39 +1091,35 @@ if st.session_state.step == 4:
         * heures_disponibles
     )
 
-    energie_max_mwh_an = (
-        energie_max_kwh_an / 1000
-    )
-
     st.info(
         f"Énergie thermique maximale théorique fournie : "
-        f"**{energie_max_mwh_an:,.1f} MWh/an**"
+        f"**{energie_max_kwh_an:,.0f} kWh/an**"
     )
 
     # -----------------------------------------------------------------------
     # COMPARAISON AU BESOIN
     # -----------------------------------------------------------------------
 
-    besoin_mwh_an = 0.0
+    besoin_kwh_an = 0.0
 
     if "besoin_industriel" in st.session_state:
-        besoin_mwh_an = (
+        besoin_kwh_an = (
             st.session_state.besoin_industriel.get(
-                "energie_mwh_an",
+                "energie_kwh_an",
                 0.0
             )
         )
 
-    if besoin_mwh_an > 0:
+    if besoin_kwh_an > 0:
 
-        energie_couverte_mwh = min(
-            energie_max_mwh_an,
-            besoin_mwh_an
+        energie_couverte_kwh = min(
+            energie_max_kwh_an,
+            besoin_kwh_an
         )
 
         couverture_pct = (
-            energie_couverte_mwh
-            / besoin_mwh_an
+            energie_couverte_kwh
+            / besoin_kwh_an
             * 100
         )
 
@@ -1131,12 +1127,12 @@ if st.session_state.step == 4:
 
         c1.metric(
             "Besoin thermique du site",
-            f"{besoin_mwh_an:,.1f} MWh/an"
+            f"{besoin_kwh_an:,.0f} kWh/an"
         )
 
         c2.metric(
             "Énergie couverte par la PAC",
-            f"{energie_couverte_mwh:,.1f} MWh/an"
+            f"{energie_couverte_kwh:,.0f} kWh/an"
         )
 
         c3.metric(
@@ -1146,7 +1142,7 @@ if st.session_state.step == 4:
 
     else:
 
-        energie_couverte_mwh = 0.0
+        energie_couverte_kwh = 0.0
         couverture_pct = 0.0
 
         st.warning(
@@ -1163,17 +1159,17 @@ if st.session_state.step == 4:
 
     if cop_nominal > 0:
 
-        consommation_elec_mwh = (
-            energie_couverte_mwh
+        consommation_elec_kwh = (
+            energie_couverte_kwh
             / cop_nominal
         )
 
     else:
-        consommation_elec_mwh = 0.0
+        consommation_elec_kwh = 0.0
 
     st.metric(
         "Consommation électrique PAC",
-        f"{consommation_elec_mwh:,.1f} MWh/an"
+        f"{consommation_elec_kwh:,.0f} kWh/an"
     )
 
     # -----------------------------------------------------------------------
@@ -1225,10 +1221,10 @@ if st.session_state.step == 4:
         "disponibilite_pct": disponibilite_pct,
         "heures_disponibles_an": heures_disponibles,
         "facteur_correction_capacite": coefficient_correction,
-        "energie_max_mwh_an": energie_max_mwh_an,
-        "energie_couverte_mwh_an": energie_couverte_mwh,
+        "energie_max_kwh_an": energie_max_kwh_an,
+        "energie_couverte_kwh_an": energie_couverte_kwh,
         "couverture_pct": couverture_pct,
-        "consommation_elec_mwh_an": consommation_elec_mwh,
+        "consommation_elec_kwh_an": consommation_elec_kwh,
         "cout_unitaire": cout_unitaire,
         "cout_total": cout_total,
     }
@@ -1260,7 +1256,7 @@ if st.session_state.step == 4:
 # ÉTAPE 5 — Analyse finale : énergie + PRI + estimation OSE
 # ---------------------------------------------------------------------------
 
-if st.session_state.step == 5:
+elif st.session_state.step == 5:
 
     st.subheader("5. Analyse énergétique, économique et estimation OSE")
 
@@ -1277,12 +1273,12 @@ if st.session_state.step == 5:
     nombre_unites = int(pac.get("nombre_unites", 1))
     cop = float(pac.get("cop", 3.0))
 
-    energie_couverte_mwh = float(
-        pac.get("energie_couverte_mwh_an", 0.0)
+    energie_couverte_kwh = float(
+        pac.get("energie_couverte_kwh_an", 0.0)
     )
 
-    conso_pac_mwh = float(
-        pac.get("consommation_elec_mwh_an", 0.0)
+    conso_pac_kwh = float(
+        pac.get("consommation_elec_kwh_an", 0.0)
     )
 
     cout_projet = float(
@@ -1329,9 +1325,6 @@ if st.session_state.step == 5:
     # -----------------------------------------------------------------------
     # ÉNERGIE DE RÉFÉRENCE
     # -----------------------------------------------------------------------
-
-    energie_couverte_kwh = energie_couverte_mwh * 1000
-    conso_pac_kwh = conso_pac_mwh * 1000
 
     cout_pac = conso_pac_kwh * prix_elec
 
@@ -1483,12 +1476,12 @@ if st.session_state.step == 5:
 
     c2.metric(
         "Énergie couverte",
-        f"{energie_couverte_mwh:,.1f} MWh/an"
+        f"{energie_couverte_kwh:,.0f} kWh/an"
     )
 
     c3.metric(
         "Consommation PAC",
-        f"{conso_pac_mwh:,.1f} MWh/an"
+        f"{conso_pac_kwh:,.0f} kWh/an"
     )
 
     c4.metric(
@@ -1604,8 +1597,8 @@ if st.session_state.step == 5:
             "Valeur": [
                 nombre_unites,
                 f"{puissance_ose_kw:,.1f} kW",
-                f"{energie_couverte_mwh:,.1f} MWh/an",
-                f"{conso_pac_mwh:,.1f} MWh/an",
+                f"{energie_couverte_kwh:,.0f} kWh/an",
+                f"{conso_pac_kwh:,.0f} kWh/an",
                 f"{energie_evitee:,.0f} {unite_evitee}/an",
                 f"{economie_annuelle:,.0f} $/an",
                 f"{cout_projet:,.0f} $",
