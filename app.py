@@ -693,57 +693,54 @@ if st.session_state.step == 3:
         total_volume_annuel += volume_annuel_gal
         total_energie_kwh_an += energie_kwh_an
 
-    # -----------------------------------------------------------------------
-    # AFFICHAGE DU TABLEAU
-    # -----------------------------------------------------------------------
+  # -----------------------------------------------------------------------
+# AFFICHAGE DU TABLEAU
+# -----------------------------------------------------------------------
 
-    if resultats:
+if resultats:
 
-        df_besoins = pd.DataFrame(resultats)
+    df_besoins = pd.DataFrame(resultats)
 
-        st.markdown("### 📊 Résumé des besoins")
+    st.markdown("### 📊 Résumé des besoins")
 
-        st.dataframe(
-            df_besoins.style.format(
-                {
-                    "Volume (gal US/jour)": "{:,.0f}",
-                    "Jours/an": "{:,.0f}",
-                    "Volume annuel (gal US)": "{:,.0f}",
-                    "Température (°C)": "{:.1f}",
-                    "ΔT (°C)": "{:.1f}",
-                    "Besoin thermique (MMBtu/an)": "{:,.1f}",
-                    "Besoin thermique (MWh/an)": "{:,.1f}",
-                }
-            ),
-            use_container_width=True,
+    st.dataframe(
+        df_besoins.style.format(
+            {
+                "Débit (GPM)": "{:,.1f}",
+                "Jours/an": "{:,.0f}",
+                "Température (°C)": "{:.1f}",
+                "ΔT (°C)": "{:.1f}",
+                "Besoin thermique (MMBtu/an)": "{:,.1f}",
+                "Besoin thermique (MWh/an)": "{:,.1f}",
+            }
+        ),
+        use_container_width=True,
+    )
+
+    total_mwh_an = total_energie_kwh_an / 1000
+
+    total_mmbtu_an = total_energie_kwh_an * 0.003412
+
+    # Nombre total d'heures de fonctionnement par année
+    total_heures_an = (
+        max(
+            [
+                p["jours_an"]
+                for p in st.session_state.postes_ecs
+                if p["inclure"]
+            ],
+            default=0
         )
+        * heures_fonctionnement
+    )
 
-        total_mwh_an = (
-            total_energie_kwh_an / 1000
+    # Puissance thermique moyenne pendant les heures d'opération
+    if total_heures_an > 0:
+        puissance_moyenne_kw = (
+            total_energie_kwh_an / total_heures_an
         )
-
-        total_mmbtu_an = (
-            total_energie_kwh_an * 0.003412
-        )
-
-        # Puissance moyenne pendant les heures d'opération
-        total_heures_an = (
-            max(
-                [p["jours_an"]
-                 for p in st.session_state.postes_ecs
-                 if p["inclure"]],
-                default=0
-            )
-            * heures_fonctionnement
-        )
-
-        if total_heures_an > 0:
-            puissance_moyenne_kw = (
-                total_energie_kwh_an
-                / total_heures_an
-            )
-        else:
-            puissance_moyenne_kw = 0.0
+    else:
+        puissance_moyenne_kw = 0.0
 
         # -------------------------------------------------------------------
         # INDICATEURS
