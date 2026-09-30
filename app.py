@@ -774,26 +774,26 @@ if resultats:
         )
 
         # -------------------------------------------------------------------
-        # SESSION STATE
-        # -------------------------------------------------------------------
+# SESSION STATE
+# -------------------------------------------------------------------
 
-        st.session_state.besoin_industriel = {
-            "volume_gal_jour": total_volume_jour,
-            "volume_annuel_gal": total_volume_annuel,
-            "energie_kwh_an": total_energie_kwh_an,
-            "energie_mwh_an": total_mwh_an,
-            "energie_mmbtu_an": total_mmbtu_an,
-            "puissance_moyenne_kw": puissance_moyenne_kw,
-            "temp_froide_C": temp_froide,
-            "heures_fonctionnement_jour": heures_fonctionnement,
-            "postes": resultats,
-        }
+if resultats:
 
-    else:
+    st.session_state.besoin_industriel = {
+        "debit_gpm": total_debit_gpm,
+        "energie_kwh_an": total_energie_kwh_an,
+        "energie_mwh_an": total_mwh_an,
+        "energie_mmbtu_an": total_mmbtu_an,
+        "puissance_moyenne_kw": puissance_moyenne_kw,
+        "temp_froide_C": temp_froide,
+        "heures_fonctionnement_jour": heures_fonctionnement,
+        "postes": resultats,
+    }
 
-        st.warning(
-            "Aucun poste de consommation n'est sélectionné."
-        )
+else:
+    st.warning(
+        "Aucun poste de consommation n'est sélectionné."
+    )
 
     # -----------------------------------------------------------------------
     # NAVIGATION
